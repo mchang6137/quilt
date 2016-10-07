@@ -23,6 +23,8 @@ type Container struct {
 	Command  []string
 	Labels   []string
 	Env      map[string]string
+	RAM      float64
+	CPU      float64
 }
 
 // ContainerSlice is an alias for []Container to allow for joins

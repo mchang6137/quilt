@@ -45,6 +45,8 @@ const (
 	containerArgsKey  = "args"
 	containerEnvKey   = "env"
 	containerIDKey    = "id"
+	containerCPUKey   = "container_cpu"
+	containerRAMKey   = "container_ram"
 
 	// Invariant fields.
 	invariantTypeKey    = "type"
@@ -79,6 +81,10 @@ func parseContainer(v otto.Value) (c Container, err error) {
 			c.Command, err = parseStringSlice(val)
 		case containerEnvKey:
 			c.Env, err = parseContainerEnv(val)
+		case containerCPUKey:
+			c.CPU, err = parseFloat(val)
+		case containerRAMKey:
+			c.RAM, err = parseFloat(val)
 		}
 		return err
 	})
@@ -321,6 +327,11 @@ func forField(v otto.Value, fn func(string, otto.Value) error) error {
 func parseInt(v otto.Value) (int, error) {
 	parsed, err := v.ToInteger()
 	return int(parsed), err
+}
+
+func parseFloat(v otto.Value) (float64, error) {
+	parsed, err := v.ToFloat()
+	return float64(parsed), err
 }
 
 func parseStringSlice(v otto.Value) ([]string, error) {

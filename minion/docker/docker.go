@@ -57,6 +57,9 @@ type RunOptions struct {
 	PidMode     string
 	Privileged  bool
 	VolumesFrom []string
+
+	RAM int64
+	CPU int64
 }
 
 type client interface {
@@ -103,7 +106,7 @@ func (dk Client) Run(opts RunOptions) (string, error) {
 		Privileged:  opts.Privileged,
 		VolumesFrom: opts.VolumesFrom,
 	}
-	id, err := dk.create(opts.Name, opts.Image, opts.Args, opts.Labels, env, &hc)
+	id, err := dk.create(opts.Name, opts.Image, opts.Args, opts.Labels, env, &hc, opts.CPU, opts.RAM)
 	if err != nil {
 		return "", err
 	}
@@ -323,7 +326,7 @@ func (dk Client) IsRunning(name string) (bool, error) {
 }
 
 func (dk Client) create(name, image string, args []string, labels map[string]string,
-	env map[string]struct{}, hc *dkc.HostConfig) (string, error) {
+	env map[string]struct{}, hc *dkc.HostConfig, cpu int64, ram int64) (string, error) {
 	if err := dk.Pull(image); err != nil {
 		return "", err
 	}
@@ -336,10 +339,13 @@ func (dk Client) create(name, image string, args []string, labels map[string]str
 	container, err := dk.CreateContainer(dkc.CreateContainerOptions{
 		Name: name,
 		Config: &dkc.Config{
-			Image:  string(image),
-			Cmd:    args,
-			Labels: labels,
-			Env:    envList},
+			Image:     string(image),
+			Cmd:       args,
+			Labels:    labels,
+			Env:       envList,
+			CPUShares: cpu,
+			Memory:    ram,
+		},
 		HostConfig: hc,
 	})
 	if err != nil {

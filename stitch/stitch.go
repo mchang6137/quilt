@@ -42,6 +42,8 @@ type Container struct {
 	Image   string
 	Command []string
 	Env     map[string]string
+	CPU     float64
+	RAM     float64
 }
 
 // A Label represents a logical group of containers.
