@@ -112,6 +112,8 @@ func queryContainers(spec stitch.Stitch) []db.Container {
 			Command:  c.Command,
 			Image:    c.Image,
 			Env:      c.Env,
+			RAM:      c.RAM,
+			CPU:      c.CPU,
 		}
 	}
 
@@ -171,6 +173,8 @@ func updateContainers(view db.Database, spec stitch.Stitch) {
 		dbc.Image = newc.Image
 		dbc.Env = newc.Env
 		dbc.StitchID = newc.StitchID
+		dbc.RAM = newc.RAM
+		dbc.CPU = newc.CPU
 		view.Commit(dbc)
 	}
 }

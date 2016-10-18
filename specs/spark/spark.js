@@ -51,7 +51,13 @@ Spark.prototype.job = function(command) {
 
 Spark.prototype.public = function() {
     connect(new Port(8080), publicInternet, this.masters);
+    connect(new Port(80), this.masters, publicInternet);
+    connect(new Port(443), this.masters, publicInternet);
+    connect(new Port(8080), this.masters, publicInternet);
+    connect(new Port(53), this.masters, publicInternet);
     connect(new Port(8081), publicInternet, this.workers);
+    connect(new Port(7077), publicInternet, this.masters);
+    connect(new Port(7077), this.masters, publicInternet);
 }
 
 Spark.prototype.exclusive = function(sparkMap) {

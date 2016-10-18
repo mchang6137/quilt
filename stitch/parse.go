@@ -82,9 +82,9 @@ func parseContainer(v otto.Value) (c Container, err error) {
 		case containerEnvKey:
 			c.Env, err = parseContainerEnv(val)
 		case containerCPUKey:
-			c.CPU, err = parseFloat(val)
+			c.CPU, err = parseInt64(val)
 		case containerRAMKey:
-			c.RAM, err = parseFloat(val)
+			c.RAM, err = parseInt64(val)
 		}
 		return err
 	})
@@ -329,9 +329,9 @@ func parseInt(v otto.Value) (int, error) {
 	return int(parsed), err
 }
 
-func parseFloat(v otto.Value) (float64, error) {
-	parsed, err := v.ToFloat()
-	return float64(parsed), err
+func parseInt64(v otto.Value) (int64, error) {
+	parsed, err := v.ToInteger()
+	return int64(parsed), err
 }
 
 func parseStringSlice(v otto.Value) ([]string, error) {
