@@ -18,4 +18,7 @@ const (
 
 	// Registry is the name of the registry container.
 	Registry = "registry"
-)
+
+	// Cadvisor is the name of the cadvisor container that monitors the traffic
+	Monitor = "cadvisor"
+)	    

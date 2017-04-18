@@ -26,6 +26,7 @@ var imageMap = map[string]string{
 	images.Ovsdb:         ovsImage,
 	images.Ovsvswitchd:   ovsImage,
 	images.Registry:      "registry:2",
+	images.Monitor:       "google/cadvisor:latest",
 }
 
 const etcdHeartbeatInterval = "500"
@@ -81,6 +82,11 @@ func run(name string, args ...string) {
 
 	if name == images.Ovsvswitchd {
 		ro.Privileged = true
+	}
+
+	if name == images.Monitor {
+	   	ro.Privileged = true
+		log.Infof("MICHAEL Cadvisor image started: %s", name)				
 	}
 
 	log.Infof("Start Container: %s", name)
