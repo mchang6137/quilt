@@ -77,7 +77,11 @@ func runWorkerOnce() {
 		"--election-timeout="+etcdElectionTimeout,
 		"--proxy=on")
 
-	run(images.Monitor, "")
+	run(images.Monitor,
+		"--storage_duration=2h",
+		"--allow_dynamic_housekeeping=false",
+		"--global_housekeeping_interval=3m0s",
+		"--housekeeping_interval=5s")
 
 	run(images.Ovsdb, "ovsdb-server")
 	run(images.Ovsvswitchd, "ovs-vswitchd")
