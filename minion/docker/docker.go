@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/quilt/quilt/minion/supervisor/images"
 	"github.com/quilt/quilt/minion/ipdef"
 	"github.com/quilt/quilt/util"
 
@@ -72,6 +73,13 @@ type RunOptions struct {
 	PidMode     string
 	Privileged  bool
 	VolumesFrom []string
+
+	//Cadvisor Specific
+	Binds []string
+	ExternalPort string
+	HostIP string
+	HostPort string
+	PublishAllPorts bool
 }
 
 type client interface {
@@ -114,6 +122,14 @@ func (dk Client) Run(opts RunOptions) (string, error) {
 		env = append(env, k+"="+v)
 	}
 
+	var portBinding map[dkc.Port][]dkc.PortBinding
+	var exposedPorts map[dkc.Port]struct{}
+
+	if opts.Name == images.Monitor {
+	   portBinding = map[dkc.Port][]dkc.PortBinding{dkc.Port(opts.ExternalPort): {{HostIP: opts.HostIP, HostPort: opts.HostPort}}}
+	   exposedPorts = map[dkc.Port]struct{}{"50000/tcp": {}}
+	}
+
 	hc := &dkc.HostConfig{
 		NetworkMode: opts.NetworkMode,
 		PidMode:     opts.PidMode,
@@ -121,6 +137,9 @@ func (dk Client) Run(opts RunOptions) (string, error) {
 		VolumesFrom: opts.VolumesFrom,
 		DNS:         opts.DNS,
 		DNSSearch:   opts.DNSSearch,
+		PublishAllPorts: opts.PublishAllPorts,
+		PortBindings: portBinding,
+		Binds: opts.Binds,
 	}
 
 	var nc *dkc.NetworkingConfig
@@ -136,7 +155,7 @@ func (dk Client) Run(opts RunOptions) (string, error) {
 		}
 	}
 
-	id, err := dk.create(opts.Name, opts.Image, opts.Args, opts.Labels, env,
+	id, err := dk.create(opts.Name, opts.Image, opts.Args, exposedPorts, opts.Labels, env,
 		opts.FilepathToContent, hc, nc)
 	if err != nil {
 		return "", err
@@ -369,7 +388,7 @@ func (dk Client) IsRunning(name string) (bool, error) {
 	return len(containers) != 0, nil
 }
 
-func (dk Client) create(name, image string, args []string,
+func (dk Client) create(name, image string, args []string, exposedPorts map[dkc.Port]struct{},
 	labels map[string]string, env []string, filepathToContent map[string]string,
 	hc *dkc.HostConfig, nc *dkc.NetworkingConfig) (string, error) {
 
@@ -383,7 +402,8 @@ func (dk Client) create(name, image string, args []string,
 			Image:  string(image),
 			Cmd:    args,
 			Labels: labels,
-			Env:    env},
+			Env:    env,
+			ExposedPorts: exposedPorts},
 		HostConfig:       hc,
 		NetworkingConfig: nc,
 	})

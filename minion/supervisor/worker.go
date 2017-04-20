@@ -77,14 +77,7 @@ func runWorkerOnce() {
 		"--election-timeout="+etcdElectionTimeout,
 		"--proxy=on")
 
-	run(images.Monitor,
-		"--volume=/:/rootfs:ro",
-		"--volume=/var/run:/var/run:rw",
-		"--volume=/sys:/sys:ro",
-		"--volume=/var/lib/docker/:/var/lib/docker:ro",
-		"--publish=8080:8080",
-  		"--detach=true",
-		"--userns=host")
+	run(images.Monitor, "")
 
 	run(images.Ovsdb, "ovsdb-server")
 	run(images.Ovsvswitchd, "ovs-vswitchd")

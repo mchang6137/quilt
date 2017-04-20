@@ -26,7 +26,7 @@ var imageMap = map[string]string{
 	images.Ovsdb:         ovsImage,
 	images.Ovsvswitchd:   ovsImage,
 	images.Registry:      "registry:2",
-	images.Monitor:       "google/cadvisor:latest",
+	images.Monitor:       "google/cadvisor:v0.24.1",
 }
 
 const etcdHeartbeatInterval = "500"
@@ -83,10 +83,19 @@ func run(name string, args ...string) {
 	if name == images.Ovsvswitchd {
 		ro.Privileged = true
 	}
-
+	
+	//"/cgroup:/sys/fs/cgroup:ro",	
 	if name == images.Monitor {
-	   	ro.Privileged = true
 		log.Infof("MICHAEL Cadvisor image started: %s", name)				
+		ro.Binds =  []string{"/:/rootfs:ro",
+				      "/var/run:/var/run:rw",
+				      "/sys:/sys:ro",
+				      "/var/lib/docker/:/var/lib/docker:ro"}
+		ro.ExternalPort = "50000/tcp"
+		ro.HostPort = "50000"
+		ro.HostIP = "0.0.0.0"
+		ro.PublishAllPorts = true
+		ro.Privileged = true
 	}
 
 	log.Infof("Start Container: %s", name)
