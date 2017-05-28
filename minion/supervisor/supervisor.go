@@ -84,7 +84,6 @@ func run(name string, args ...string) {
 		ro.Privileged = true
 	}
 	
-	//"/cgroup:/sys/fs/cgroup:ro",	
 	if name == images.Monitor {
 		log.Infof("MICHAEL Cadvisor image started: %s", name)				
 		ro.Binds =  []string{"/:/rootfs:ro",
