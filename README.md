@@ -37,9 +37,10 @@ web proxy:
 
 [//]: # (b1)
 ```javascript
-var Node = require("github.com/quilt/nodejs");
-var HaProxy = require("github.com/quilt/haproxy").Haproxy;
-var Mongo = require("github.com/quilt/mongo");
+var {Machine, createDeployment, Range, githubKeys} = require("@quilt/quilt");
+var Node = require("@quilt/nodejs");
+var HaProxy = require("@quilt/haproxy").Haproxy;
+var Mongo = require("@quilt/mongo");
 
 // Create 3 replicated instances of each service.
 var mongo = new Mongo(3);
@@ -122,8 +123,8 @@ Install Go with your package manager or by following the directions on
 Setup your `GOPATH` and `PATH` environment variables in your `~/.bashrc` file.
 E.g.:
 
-    export GOPATH='~/gowork'
-    export PATH='$PATH:$GOPATH/bin'
+    export GOPATH="$HOME/gowork"
+    export PATH="$PATH:$GOPATH/bin"
 
 #### Download Quilt
 Download and install Quilt and its dependencies using `go get`
@@ -137,4 +138,4 @@ instructions on how to get your Quilt deployment up and running.
 ## Contact Us
 
 Questions? Comments? Feedback?  Please feel free to reach out to us
-[here](http://landing.quilt.io/contact.php)!
+[here](http://quilt.io/contact.php)!

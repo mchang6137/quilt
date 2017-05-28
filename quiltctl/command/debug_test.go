@@ -1,8 +1,10 @@
 package command
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -109,10 +111,9 @@ type debugTest struct {
 	machines   []db.Machine
 	containers []db.Container
 
-	expSSH      bool
-	expReturn   int
-	expFiles    []string
-	expNotFiles []string
+	expSSH    bool
+	expReturn int
+	expFiles  []string
 }
 
 func TestDebug(t *testing.T) {
@@ -146,6 +147,12 @@ func TestDebug(t *testing.T) {
 					PrivateIP: "4.3.2.1",
 					Role:      db.Worker,
 				},
+				{
+					StitchID:  "4",
+					PublicIP:  "8.8.8.8",
+					PrivateIP: "9.9.9.9",
+					Role:      db.Master,
+				},
 			},
 			containers: []db.Container{
 				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
@@ -153,10 +160,11 @@ func TestDebug(t *testing.T) {
 			},
 			expSSH:    true,
 			expReturn: 0,
-			expFiles: append(filesFor("1", false, ""),
-				append(filesFor("2", true, ""),
-					filesFor("3", true, "")...)...),
-			expNotFiles: []string{},
+			expFiles: flatten(workerMachineFiles(debugFolder, "1"),
+				masterMachineFiles(debugFolder, "4"),
+				containerFiles(debugFolder, "2"),
+				containerFiles(debugFolder, "3"),
+				daemonFiles(debugFolder)),
 		},
 		// Check that all logs are fetched with -machines and -containers.
 		{
@@ -180,10 +188,10 @@ func TestDebug(t *testing.T) {
 			},
 			expSSH:    true,
 			expReturn: 0,
-			expFiles: append(filesFor("1", false, ""),
-				append(filesFor("2", true, ""),
-					filesFor("3", true, "")...)...),
-			expNotFiles: []string{},
+			expFiles: flatten(workerMachineFiles(debugFolder, "1"),
+				containerFiles(debugFolder, "2"),
+				containerFiles(debugFolder, "3"),
+				daemonFiles(debugFolder)),
 		},
 		// Check that just container logs are fetched.
 		{
@@ -206,9 +214,9 @@ func TestDebug(t *testing.T) {
 			},
 			expSSH:    true,
 			expReturn: 0,
-			expFiles: append(filesFor("2", true, ""),
-				filesFor("3", true, "")...),
-			expNotFiles: []string{},
+			expFiles: flatten(containerFiles(debugFolder, "2"),
+				containerFiles(debugFolder, "3"),
+				daemonFiles(debugFolder)),
 		},
 		// Check that just machine logs are fetched.
 		{
@@ -237,9 +245,9 @@ func TestDebug(t *testing.T) {
 			},
 			expSSH:    true,
 			expReturn: 0,
-			expFiles: append(filesFor("1", false, ""),
-				filesFor("4", false, "")...),
-			expNotFiles: []string{},
+			expFiles: flatten(workerMachineFiles(debugFolder, "1"),
+				workerMachineFiles(debugFolder, "4"),
+				daemonFiles(debugFolder)),
 		},
 		// Check that we can get logs by specific stitch ids
 		{
@@ -264,10 +272,10 @@ func TestDebug(t *testing.T) {
 			},
 			expSSH:    true,
 			expReturn: 0,
-			expFiles: append(filesFor("2", true, ""),
-				append(filesFor("4", true, ""),
-					filesFor("5", true, "")...)...),
-			expNotFiles: []string{},
+			expFiles: flatten(containerFiles(debugFolder, "2"),
+				containerFiles(debugFolder, "4"),
+				containerFiles(debugFolder, "5"),
+				daemonFiles(debugFolder)),
 		},
 		// Check that we can get logs by specific stitch ids in arbitrary order
 		{
@@ -292,10 +300,10 @@ func TestDebug(t *testing.T) {
 			},
 			expSSH:    true,
 			expReturn: 0,
-			expFiles: append(filesFor("1", false, ""),
-				append(filesFor("4", true, ""),
-					filesFor("2", true, "")...)...),
-			expNotFiles: []string{},
+			expFiles: flatten(workerMachineFiles(debugFolder, "1"),
+				containerFiles(debugFolder, "4"),
+				containerFiles(debugFolder, "2"),
+				daemonFiles(debugFolder)),
 		},
 		// Check that we error on arbitrary stitch IDs.
 		{
@@ -318,10 +326,8 @@ func TestDebug(t *testing.T) {
 				{StitchID: "41", DockerID: "c", Minion: "4.3.2.1"},
 				{StitchID: "5", DockerID: "d", Minion: "4.3.2.1"},
 			},
-			expSSH:      false,
-			expReturn:   1,
-			expFiles:    []string{},
-			expNotFiles: []string{},
+			expSSH:    false,
+			expReturn: 1,
 		},
 		// Check that we error on non-existent stitch IDs.
 		{
@@ -344,10 +350,8 @@ func TestDebug(t *testing.T) {
 				{StitchID: "41", DockerID: "c", Minion: "4.3.2.1"},
 				{StitchID: "5", DockerID: "d", Minion: "4.3.2.1"},
 			},
-			expSSH:      false,
-			expReturn:   1,
-			expFiles:    []string{},
-			expNotFiles: []string{},
+			expSSH:    false,
+			expReturn: 1,
 		},
 		// Check that containers without a minion aren't reported.
 		{
@@ -372,10 +376,10 @@ func TestDebug(t *testing.T) {
 			},
 			expSSH:    true,
 			expReturn: 0,
-			expFiles: append(filesFor("2", true, ""),
-				append(filesFor("3", true, ""),
-					filesFor("4", true, "")...)...),
-			expNotFiles: filesFor("5", true, ""),
+			expFiles: flatten(containerFiles(debugFolder, "2"),
+				containerFiles(debugFolder, "3"),
+				containerFiles(debugFolder, "4"),
+				daemonFiles(debugFolder)),
 		},
 		// Check that machines without an IP aren't reported.
 		{
@@ -401,10 +405,10 @@ func TestDebug(t *testing.T) {
 			containers: []db.Container{
 				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
 			},
-			expSSH:      true,
-			expReturn:   0,
-			expFiles:    filesFor("1", false, ""),
-			expNotFiles: filesFor("4", false, ""),
+			expSSH:    true,
+			expReturn: 0,
+			expFiles: flatten(workerMachineFiles(debugFolder, "1"),
+				daemonFiles(debugFolder)),
 		},
 		// Check that a supplied path is respected.
 		{
@@ -428,12 +432,10 @@ func TestDebug(t *testing.T) {
 			},
 			expSSH:    true,
 			expReturn: 0,
-			expFiles: append(filesFor("1", false, "tmp_folder"),
-				append(filesFor("2", true, "tmp_folder"),
-					filesFor("3", true, "tmp_folder")...)...),
-			expNotFiles: append(filesFor("1", false, ""),
-				append(filesFor("2", true, ""),
-					filesFor("3", true, "")...)...),
+			expFiles: flatten(workerMachineFiles("tmp_folder", "1"),
+				containerFiles("tmp_folder", "2"),
+				containerFiles("tmp_folder", "3"),
+				daemonFiles("tmp_folder")),
 		},
 	}
 
@@ -479,37 +481,68 @@ func TestDebug(t *testing.T) {
 			}
 		}
 
-		for _, f := range test.expFiles {
-			exists, err := util.FileExists(f)
-			assert.NoError(t, err)
-			assert.True(t, exists)
-		}
-
-		for _, f := range test.expNotFiles {
-			exists, _ := util.FileExists(f)
-			assert.False(t, exists)
-		}
+		actualFiles, err := listFiles()
+		assert.NoError(t, err)
+		sort.Strings(actualFiles)
+		expFiles := test.expFiles
+		sort.Strings(expFiles)
+		assert.Equal(t, expFiles, actualFiles)
 
 		mockSSHClient.AssertExpectations(t)
 	}
 }
 
-func filesFor(id string, container bool, outpath string) []string {
-	prefix := machineDir
-	cmds := machineCmds
-	if container {
-		prefix = containerDir
-		cmds = containerCmds
-	}
+func listFiles() (files []string, err error) {
+	err = afero.Afero{Fs: util.AppFs}.Walk("",
+		func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
 
-	rootDir := debugFolder
-	if outpath != "" {
-		rootDir = outpath
-	}
-	exp := []string{}
-	for _, cmd := range cmds {
-		exp = append(exp, filepath.Join(rootDir, prefix, id, cmd.name))
-	}
+			if !info.IsDir() {
+				files = append(files, path)
+			}
+			return nil
+		},
+	)
+	return files, err
+}
 
+func containerFiles(rootDir, id string) []string {
+	return withParentFolder(rootDir, containerDir, id, containerCmds)
+}
+
+func commonMachineFiles(rootDir, id string) []string {
+	return withParentFolder(rootDir, machineDir, id, machineCmds)
+}
+
+func masterMachineFiles(rootDir, id string) []string {
+	return append(commonMachineFiles(rootDir, id),
+		withParentFolder(rootDir, machineDir, id, masterMachineCmds)...)
+}
+
+func workerMachineFiles(rootDir, id string) []string {
+	return append(commonMachineFiles(rootDir, id),
+		withParentFolder(rootDir, machineDir, id, workerMachineCmds)...)
+}
+
+func daemonFiles(rootDir string) (exp []string) {
+	for _, cmd := range daemonCmds {
+		exp = append(exp, filepath.Join(rootDir, cmd.name))
+	}
 	return exp
+}
+
+func withParentFolder(rootDir, typeDir, id string, cmds []logCmd) (exp []string) {
+	for _, cmd := range cmds {
+		exp = append(exp, filepath.Join(rootDir, typeDir, id, cmd.name))
+	}
+	return exp
+}
+
+func flatten(fileLists ...[]string) (files []string) {
+	for _, lst := range fileLists {
+		files = append(files, lst...)
+	}
+	return files
 }

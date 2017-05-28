@@ -24,22 +24,26 @@ all:
 install:
 	cd -P . && go install .
 
-check: format-check
+golang-check:
 	govendor test +local
+
+javascript-check:
+	npm test
+
+check: format-check golang-check javascript-check
 
 clean:
 	govendor clean -x +local
 	rm -f *.cov.coverprofile cluster/*.cov.coverprofile minion/*.cov.coverprofile
 	rm -f *.cov.html cluster/*.cov.html minion/*.cov.html
 
-windows:
-	cd -P . && GOOS=windows GOARCH=386 go build .
-
 linux:
-	cd -P . && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build .
+	cd -P . && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o quilt_linux .
 
 darwin:
-	cd -P . && CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build .
+	cd -P . && CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o quilt_darwin .
+
+release: linux darwin
 
 COV_SKIP= /api/client/mocks \
 	  /api/pb \
@@ -58,7 +62,7 @@ COV_SKIP= /api/client/mocks \
 	  /version
 
 COV_PKG = $(subst github.com/quilt/quilt,,$(PACKAGES))
-coverage: $(addsuffix .cov, $(filter-out $(COV_SKIP), $(COV_PKG)))
+go-coverage: $(addsuffix .cov, $(filter-out $(COV_SKIP), $(COV_PKG)))
 	echo "" > coverage.txt
 	for f in $^ ; do \
 	    cat .$$f >> coverage.txt ; \
@@ -67,6 +71,11 @@ coverage: $(addsuffix .cov, $(filter-out $(COV_SKIP), $(COV_PKG)))
 %.cov:
 	go test -coverprofile=.$@ .$*
 	go tool cover -html=.$@ -o .$@.html
+
+js-coverage:
+	npm run-script cov > bindings.lcov
+
+coverage: go-coverage js-coverage
 
 format: scripts/format/format
 	gofmt -w -s $(NOVENDOR)
@@ -96,7 +105,7 @@ lint: format
 			golint -min_confidence .25 -set_exit_status $$package || EXIT_CODE=1; \
 		fi \
 	done ; \
-	find . -path ./vendor -prune -o -name '*' -type f -print | xargs misspell -error || EXIT_CODE=1; \
+	find . \( -path ./vendor -o -path ./node_modules \) -prune -o -name '*' -type f -print | xargs misspell -error || EXIT_CODE=1; \
 	ineffassign . || EXIT_CODE=1; \
 	exit $$EXIT_CODE
 
@@ -113,6 +122,7 @@ get-build-tools:
 	    github.com/golang/lint/golint \
 	    github.com/gordonklaus/ineffassign \
 	    github.com/kardianos/govendor
+	npm install .
 
 # This additionally contains the tools needed for `go generate` to work.
 go-get: get-build-tools

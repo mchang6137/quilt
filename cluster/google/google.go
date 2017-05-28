@@ -1,20 +1,5 @@
 package google
 
-////// SET UP API ACCESS:
-//
-// 1) In the Google Developer Console navigate to:
-//    Permissions > Service accounts
-//
-// 2) Create or use an existing Service Account
-//
-// 3) For your Service Account, create and save a key as "~/.gce/quilt.json"
-//
-// 4) In the Google Developer Console navigate to:
-//    Permissions > Permissions
-//
-// 5) If the Service Account is not already, assign it the "Editor" role.
-//    You select the account by email.
-
 import (
 	"errors"
 	"fmt"
@@ -60,9 +45,7 @@ const (
 type Cluster struct {
 	gce client
 
-	projID      string // gce project ID
 	imgURL      string // gce url to the VM image
-	baseURL     string // gce project specific url prefix
 	networkName string // gce identifier for the network
 	ipv4Range   string // ipv4 range of the internal network
 	intFW       string // gce internal firewall name
@@ -83,16 +66,14 @@ func New(namespace, zone string) (*Cluster, error) {
 
 	clst := Cluster{
 		gce:       gce,
-		projID:    "declarative-infrastructure",
 		ns:        fmt.Sprintf("%s-%s", zone, namespace),
 		ipv4Range: "192.168.0.0/16",
 		zone:      zone,
 	}
-	clst.baseURL = fmt.Sprintf("%s/%s", computeBaseURL, clst.projID)
 	clst.intFW = fmt.Sprintf("%s-internal", clst.ns)
 	clst.imgURL = fmt.Sprintf("%s/%s", computeBaseURL,
 		"ubuntu-os-cloud/global/images/ubuntu-1604-xenial-v20170202")
-	clst.networkName = fmt.Sprintf("%s/global/networks/%s", clst.baseURL, clst.ns)
+	clst.networkName = fmt.Sprintf("global/networks/%s", clst.ns)
 
 	if err := clst.netInit(); err != nil {
 		log.WithError(err).Debug("failed to start up gce network")
@@ -112,7 +93,7 @@ func (clst *Cluster) List() ([]machine.Machine, error) {
 	// XXX: This doesn't use the instance group listing functionality because
 	// listing that way doesn't get you information about the instances
 	var mList []machine.Machine
-	list, err := clst.gce.ListInstances(clst.projID, clst.zone, apiOptions{
+	list, err := clst.gce.ListInstances(clst.zone, apiOptions{
 		filter: fmt.Sprintf("description eq %s", clst.ns),
 	})
 	if err != nil {
@@ -177,7 +158,7 @@ func (clst *Cluster) Stop(machines []machine.Machine) error {
 	// XXX: should probably have a better clean up routine if an error is encountered
 	var names []string
 	for _, m := range machines {
-		_, err := clst.gce.DeleteInstance(clst.projID, m.Region, m.ID)
+		_, err := clst.gce.DeleteInstance(m.Region, m.ID)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"error": err,
@@ -259,11 +240,10 @@ func (clst *Cluster) operationWait(ops []*compute.Operation, domain int) error {
 			for len(ops) > 0 {
 				switch {
 				case domain == local:
-					op, err = clst.gce.GetZoneOperation(clst.projID,
+					op, err = clst.gce.GetZoneOperation(
 						ops[0].Zone, ops[0].Name)
 				case domain == global:
-					op, err = clst.gce.GetGlobalOperation(clst.projID,
-						ops[0].Name)
+					op, err = clst.gce.GetGlobalOperation(ops[0].Name)
 				}
 				if err != nil {
 					return err
@@ -291,8 +271,7 @@ func (clst *Cluster) instanceNew(name string, size string,
 	instance := &compute.Instance{
 		Name:        name,
 		Description: clst.ns,
-		MachineType: fmt.Sprintf("%s/zones/%s/machineTypes/%s",
-			clst.baseURL,
+		MachineType: fmt.Sprintf("zones/%s/machineTypes/%s",
 			clst.zone,
 			size),
 		Disks: []*compute.AttachedDisk{
@@ -325,7 +304,7 @@ func (clst *Cluster) instanceNew(name string, size string,
 		},
 	}
 
-	return clst.gce.InsertInstance(clst.projID, clst.zone, instance)
+	return clst.gce.InsertInstance(clst.zone, instance)
 }
 
 func (clst *Cluster) parseACLs(fws []*compute.Firewall) (acls []acl.ACL) {
@@ -370,7 +349,7 @@ func (clst *Cluster) parseACLs(fws []*compute.Firewall) (acls []acl.ACL) {
 
 // SetACLs adds and removes acls in `clst` so that it conforms to `acls`.
 func (clst *Cluster) SetACLs(acls []acl.ACL) error {
-	list, err := clst.gce.ListFirewalls(clst.projID)
+	list, err := clst.gce.ListFirewalls()
 	if err != nil {
 		return err
 	}
@@ -409,7 +388,7 @@ func (clst *Cluster) SetACLs(acls []acl.ACL) error {
 			log.WithField("ports", fmt.Sprintf(
 				"%d-%d", acl.MinPort, acl.MaxPort)).
 				Debug("Google: Deleting firewall")
-			op, err = clst.gce.DeleteFirewall(clst.projID, fw.Name)
+			op, err = clst.gce.DeleteFirewall(fw.Name)
 			if err != nil {
 				return err
 			}
@@ -435,7 +414,7 @@ func (clst *Cluster) SetACLs(acls []acl.ACL) error {
 // UpdateFloatingIPs updates IPs of machines by recreating their network interfaces.
 func (clst *Cluster) UpdateFloatingIPs(machines []machine.Machine) error {
 	for _, m := range machines {
-		instance, err := clst.gce.GetInstance(clst.projID, m.Region, m.ID)
+		instance, err := clst.gce.GetInstance(m.Region, m.ID)
 		if err != nil {
 			return err
 		}
@@ -445,14 +424,14 @@ func (clst *Cluster) UpdateFloatingIPs(machines []machine.Machine) error {
 		// is not a seamless, zero-downtime procedure.
 		networkInterface := instance.NetworkInterfaces[0]
 		accessConfig := instance.NetworkInterfaces[0].AccessConfigs[0]
-		_, err = clst.gce.DeleteAccessConfig(clst.projID, m.Region, m.ID,
+		_, err = clst.gce.DeleteAccessConfig(m.Region, m.ID,
 			accessConfig.Name, networkInterface.Name)
 		if err != nil {
 			return err
 		}
 
 		// Add new network interface.
-		_, err = clst.gce.AddAccessConfig(clst.projID, m.Region, m.ID,
+		_, err = clst.gce.AddAccessConfig(m.Region, m.ID,
 			networkInterface.Name, &compute.AccessConfig{
 				Type: "ONE_TO_ONE_NAT",
 				Name: floatingIPName,
@@ -469,7 +448,7 @@ func (clst *Cluster) UpdateFloatingIPs(machines []machine.Machine) error {
 }
 
 func (clst *Cluster) getFirewall(name string) (*compute.Firewall, error) {
-	list, err := clst.gce.ListFirewalls(clst.projID)
+	list, err := clst.gce.ListFirewalls()
 	if err != nil {
 		return nil, err
 	}
@@ -506,7 +485,7 @@ func (clst *Cluster) getCreateFirewall(minPort int, maxPort int) (
 }
 
 func (clst *Cluster) networkExists(name string) (bool, error) {
-	list, err := clst.gce.ListNetworks(clst.projID)
+	list, err := clst.gce.ListNetworks()
 	if err != nil {
 		return false, err
 	}
@@ -542,7 +521,7 @@ func (clst *Cluster) insertFirewall(name, ports string, sourceRanges []string) (
 		SourceRanges: sourceRanges,
 	}
 
-	return clst.gce.InsertFirewall(clst.projID, firewall)
+	return clst.gce.InsertFirewall(firewall)
 }
 
 func (clst *Cluster) firewallExists(name string) (bool, error) {
@@ -563,19 +542,17 @@ func (clst *Cluster) firewallPatch(name string,
 		SourceRanges: ips,
 	}
 
-	return clst.gce.PatchFirewall(clst.projID, name, firewall)
+	return clst.gce.PatchFirewall(name, firewall)
 }
 
-func newComputeService(ctx context.Context) (*compute.Service, error) {
-	client, err := google.DefaultClient(ctx, compute.ComputeScope)
+func newComputeService(configStr string) (*compute.Service, error) {
+	jwtConfig, err := google.JWTConfigFromJSON(
+		[]byte(configStr), compute.ComputeScope)
 	if err != nil {
 		return nil, err
 	}
-	computeService, err := compute.New(client)
-	if err != nil {
-		return nil, err
-	}
-	return computeService, nil
+
+	return compute.New(jwtConfig.Client(context.Background()))
 }
 
 // Initializes the network for the cluster
@@ -593,7 +570,7 @@ func (clst *Cluster) netInit() error {
 	}
 
 	log.Debug("Creating network")
-	op, err := clst.gce.InsertNetwork(clst.projID, &compute.Network{
+	op, err := clst.gce.InsertNetwork(&compute.Network{
 		Name:      clst.ns,
 		IPv4Range: clst.ipv4Range,
 	})
