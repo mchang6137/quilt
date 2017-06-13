@@ -84,6 +84,7 @@ func joinContainers(view db.Database, etcdDBCs []db.Container) {
 
 		return struct {
 			IP                string
+			Hostname	  string
 			StitchID          string
 			Image             string
 			ImageID           string
@@ -92,6 +93,7 @@ func joinContainers(view db.Database, etcdDBCs []db.Container) {
 			FilepathToContent string
 		}{
 			IP:                dbc.IP,
+			Hostname:	   dbc.Hostname,
 			StitchID:          dbc.StitchID,
 			Image:             dbc.Image,
 			ImageID:           dbc.ImageID,
@@ -119,6 +121,7 @@ func joinContainers(view db.Database, etcdDBCs []db.Container) {
 		edbc := pair.R.(db.Container)
 
 		dbc.IP = edbc.IP
+		dbc.Hostname = edbc.Hostname
 		dbc.Minion = edbc.Minion
 		dbc.StitchID = edbc.StitchID
 		dbc.Image = edbc.Image

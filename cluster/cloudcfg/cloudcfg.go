@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	quiltImage = "mchang6137/quilt"
+	quiltImage = "hantaowang/quilt"
 )
 
 // Allow mocking out for the unit tests.

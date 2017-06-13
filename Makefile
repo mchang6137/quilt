@@ -14,7 +14,7 @@ LINE_LENGTH_EXCLUDE=./api/pb/pb.pb.go \
 		    ./minion/pb/pb.pb.go \
 		    ./stitch/bindings.js.go
 
-REPO = quilt
+REPO = hantaowang
 DOCKER = docker
 SHELL := /bin/bash
 

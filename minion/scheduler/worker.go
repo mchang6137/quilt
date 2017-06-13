@@ -123,7 +123,13 @@ func doContainers(dk docker.Client, ifaces []interface{},
 func dockerRun(dk docker.Client, iface interface{}) {
 	dbc := iface.(db.Container)
 	log.WithField("container", dbc).Info("Start container")
+
+	hostname := dbc.Hostname
+	if hostname != "" {
+		hostname += ".q"
+	}
 	_, err := dk.Run(docker.RunOptions{
+		Hostname:	   hostname,
 		Image:             dbc.Image,
 		Args:              dbc.Command,
 		Env:               dbc.Env,
