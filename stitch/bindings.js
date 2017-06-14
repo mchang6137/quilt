@@ -12,8 +12,9 @@ function githubKeys(user) {
     const response = request('GET', `https://github.com/${user}.keys`);
     if (response.statusCode >= 300) {
         // Handle any errors.
-        throw `HTTP request for ${user}'s github keys failed with error ` +
-            `${response.statusCode}`;
+        throw new Error(
+            `HTTP request for ${user}'s github keys failed with error ` +
+            `${response.statusCode}`);
     }
 
     const keys = response.getBody('utf8').trim().split('\n');
@@ -25,8 +26,11 @@ function githubKeys(user) {
 // The default deployment object. createDeployment overwrites this.
 global._quiltDeployment = new Deployment({});
 
-// The label used by the QRI to denote connections with public internet.
-var publicInternetLabel = "public";
+// The name used to refer to the public internet in the JSON description
+// of the network connections (connections to other services are referenced by
+// the name of the service, but since the public internet is not a service,
+// we need a special label for it).
+var publicInternetLabel = 'public';
 
 // Global unique ID counter.
 var uniqueIDCounter = 0;
@@ -41,19 +45,19 @@ function Deployment(deploymentOpts) {
     deploymentOpts = deploymentOpts || {};
 
     this.maxPrice = deploymentOpts.maxPrice || 0;
-    this.namespace = deploymentOpts.namespace || "default-namespace";
+    this.namespace = deploymentOpts.namespace || 'default-namespace';
     this.adminACL = deploymentOpts.adminACL || [];
 
     this.machines = [];
     this.containers = {};
     this.services = [];
-    this.connections = [];
+    this.allowedInboundConnections = [];
     this.placements = [];
     this.invariants = [];
 }
 
 function omitSSHKey(key, value) {
-    if (key == "sshKeys") {
+    if (key == 'sshKeys') {
         return undefined;
     }
     return value;
@@ -68,7 +72,7 @@ function uniqueID() {
 // and Machines.
 function key(obj) {
     var keyObj = obj.clone();
-    keyObj._refID = "";
+    keyObj._refID = '';
     return stringify(keyObj, { replacer: omitSSHKey });
 }
 
@@ -175,10 +179,11 @@ Deployment.prototype.vet = function() {
     var dockerfiles = {};
     var hostnames = {};
     this.services.forEach(function(service) {
-        service.connections.forEach(function(conn) {
-            var to = conn.to.name;
-            if (!labelMap[to]) {
-                throw service.name + " has a connection to undeployed service: " + to;
+        service.allowedInboundConnections.forEach(function(conn) {
+            var from = conn.from.name;
+            if (!labelMap[from]) {
+                throw new Error(`${service.name} allows connections from ` +
+                    `an undeployed service: ${from}`);
             }
         });
 
@@ -190,27 +195,28 @@ Deployment.prototype.vet = function() {
 
             var otherLabel = plcm.otherLabel;
             if (otherLabel !== undefined && !labelMap[otherLabel]) {
-                throw service.name + " has a placement in terms of an " +
-                    "undeployed service: " + otherLabel;
+                throw new Error(`${service.name} has a placement in terms ` +
+                    `of an undeployed service: ${otherLabel}`);
             }
         });
 
         if (hasFloatingIp && service.incomingPublic.length
             && service.containers.length > 1) {
-            throw service.name + " has a floating IP and multiple containers. " +
-              "This is not yet supported."
+            throw new Error(`${service.name} has a floating IP and ` +
+                `multiple containers. This is not yet supported.`);
         }
 
         service.containers.forEach(function(c) {
             var name = c.image.name;
             if (dockerfiles[name] != undefined && dockerfiles[name] != c.image.dockerfile) {
-                throw name + " has differing Dockerfiles";
+                throw new Error(`${name} has differing Dockerfiles`);
             }
             dockerfiles[name] = c.image.dockerfile;
 
             if (c.hostname !== undefined) {
                 if (hostnames[c.hostname]) {
-                    throw "hostname \"" + c.hostname + "\" used for multiple containers";
+                    throw new Error(`hostname "${c.hostname}" used for ` +
+                        `multiple containers`);
                 }
                 hostnames[c.hostname] = true;
             }
@@ -228,7 +234,8 @@ Deployment.prototype.deploy = function(toDeployList) {
     var that = this;
     toDeployList.forEach(function(toDeploy) {
         if (!toDeploy.deploy) {
-            throw "only objects that implement \"deploy(deployment)\" can be deployed";
+            throw new Error(`only objects that implement ` +
+                `"deploy(deployment)" can be deployed`);
         }
         toDeploy.deploy(that);
     });
@@ -244,14 +251,14 @@ function Service(name, containers) {
     this.annotations = [];
     this.placements = [];
 
-    this.connections = [];
+    this.allowedInboundConnections = [];
     this.outgoingPublic = [];
     this.incomingPublic = [];
 }
 
 // Get the Quilt hostname that represents the entire service.
 Service.prototype.hostname = function() {
-    return this.name + ".q";
+    return this.name + '.q';
 };
 
 // Get a list of Quilt hostnames that address the containers within the service.
@@ -259,7 +266,7 @@ Service.prototype.children = function() {
     var i;
     var res = [];
     for (i = 1; i < this.containers.length + 1; i++) {
-        res.push(i + "." + this.name + ".q");
+        res.push(i + '.' + this.name + '.q');
     }
     return res;
 };
@@ -293,19 +300,43 @@ Service.prototype.deploy = function(deployment) {
 };
 
 Service.prototype.connect = function(range, to) {
-    range = boxRange(range);
-    if (to === publicInternet) {
-        return this.connectToPublic(range);
+    console.warn('Warning: connect is deprecated; switch to using ' +
+        'allowFrom. If you previously used a.connect(5, b), you should ' +
+        'now use b.allowFrom(a, 5).');
+    if (!(to === publicInternet || to instanceof Service)) {
+        throw new Error(`Services can only connect to other services. ` +
+            `Check that you're connecting to a service, and not to a ` +
+            `Container or other object.`);
     }
-    this.connections.push(new Connection(range, to));
+    to.allowFrom(this, range);
+}
+
+Service.prototype.allowFrom = function(sourceService, portRange) {
+    portRange = boxRange(portRange);
+    if (sourceService === publicInternet) {
+        return this.allowFromPublic(portRange);
+    }
+    if (!(sourceService instanceof Service)) {
+        throw new Error(`Services can only connect to other services. ` +
+            `Check that you're allowing connections from a service, and ` +
+            `not from a Container or other object.`);
+    }
+    this.allowedInboundConnections.push(
+        new Connection(sourceService, portRange));
 };
 
-// publicInternet is an object that looks like another service that can be
-// connected to or from. However, it is actually just syntactic sugar to hide
-// the connectToPublic and connectFromPublic functions.
+// publicInternet is an object that looks like another service that can
+// allow inbound connections. However, it is actually just syntactic sugar to hide
+// the allowOutboundPublic and allowFromPublic functions.
 var publicInternet = {
     connect: function(range, to) {
-        to.connectFromPublic(range);
+        console.warn('Warning: connect is deprecated; switch to using ' +
+            'allowFrom. Instead of publicInternet.connect(port, service), ' +
+            'use service.allowFrom(publicInternet, port).');
+        to.allowFromPublic(range);
+    },
+    allowFrom: function(sourceService, portRange) {
+        sourceService.allowOutboundPublic(portRange);
     },
     canReach: function(to) {
         return reachable(publicInternetLabel, to.name);
@@ -314,18 +345,32 @@ var publicInternet = {
 
 // Allow outbound traffic from the service to public internet.
 Service.prototype.connectToPublic = function(range) {
+    console.warn('Warning: connectToPublic is deprecated; switch to using ' +
+        'allowOutboundPublic.');
+    this.allowOutboundPublic(range);
+}
+
+Service.prototype.allowOutboundPublic = function(range) {
     range = boxRange(range);
     if (range.min != range.max) {
-        throw "public internet cannot connect on port ranges";
+        throw new Error(`public internet can only connect to single ports ` +
+            `and not to port ranges`);
     }
     this.outgoingPublic.push(range);
 };
 
 // Allow inbound traffic from public internet to the service.
 Service.prototype.connectFromPublic = function(range) {
+    console.warn('Warning: connectFromPublic is deprecated; switch to ' +
+        'allowFromPublic');
+    this.allowFromPublic(range);
+}
+
+Service.prototype.allowFromPublic = function(range) {
     range = boxRange(range);
     if (range.min != range.max) {
-        throw "public internet cannot connect on port ranges";
+        throw new Error(`public internet can only connect to single ports ` +
+            `and not to port ranges`);
     }
     this.incomingPublic.push(range);
 };
@@ -338,10 +383,10 @@ Service.prototype.getQuiltConnections = function() {
     var connections = [];
     var that = this;
 
-    this.connections.forEach(function(conn) {
+    this.allowedInboundConnections.forEach(function(conn) {
         connections.push({
-            from: that.name,
-            to: conn.to.name,
+            from: conn.from.name,
+            to: that.name,
             minPort: conn.minPort,
             maxPort: conn.maxPort
         });
@@ -376,11 +421,11 @@ Service.prototype.getQuiltPlacements = function() {
             targetLabel: that.name,
             exclusive: placement.exclusive,
 
-            otherLabel: placement.otherLabel || "",
-            provider: placement.provider || "",
-            size: placement.size || "",
-            region: placement.region || "",
-            floatingIp: placement.floatingIp || ""
+            otherLabel: placement.otherLabel || '',
+            provider: placement.provider || '',
+            size: placement.size || '',
+            region: placement.region || '',
+            floatingIp: placement.floatingIp || ''
         });
     });
     return placements;
@@ -403,20 +448,23 @@ function boxRange(x) {
     if (x === undefined) {
         return new Range(0, 0);
     }
-    if (typeof x === "number") {
-        x = new Range(x, x);
+    if (typeof x === 'number') {
+        return new Range(x, x);
     }
-    return x;
+    if (!(x instanceof Range)) {
+        throw new Error('Input argument must be a number or a Range')
+    }
+    return x
 }
 
 function Machine(optionalArgs) {
     this._refID = uniqueID();
 
-    this.provider = optionalArgs.provider || "";
-    this.role = optionalArgs.role || "";
-    this.region = optionalArgs.region || "";
-    this.size = optionalArgs.size || "";
-    this.floatingIp = optionalArgs.floatingIp || "";
+    this.provider = optionalArgs.provider || '';
+    this.role = optionalArgs.role || '';
+    this.region = optionalArgs.region || '';
+    this.size = optionalArgs.size || '';
+    this.floatingIp = optionalArgs.floatingIp || '';
     this.diskSize = optionalArgs.diskSize || 0;
     this.sshKeys = optionalArgs.sshKeys || [];
     this.cpu = boxRange(optionalArgs.cpu);
@@ -444,11 +492,11 @@ Machine.prototype.withRole = function(role) {
 };
 
 Machine.prototype.asWorker = function() {
-    return this.withRole("Worker");
+    return this.withRole('Worker');
 };
 
 Machine.prototype.asMaster = function() {
-    return this.withRole("Master");
+    return this.withRole('Master');
 };
 
 // Create n new machines with the same attributes.
@@ -530,16 +578,16 @@ Container.prototype.setHostname = function(h) {
 
 Container.prototype.getHostname = function() {
     if (this.hostname === undefined) {
-        throw new Error("no hostname");
+        throw new Error('no hostname');
     }
-    return this.hostname + ".q";
+    return this.hostname + '.q';
 };
 
-var enough = { form: "enough" };
-var between = invariantType("between");
-var neighbor = invariantType("reachDirect");
-var reachableACL = invariantType("reachACL");
-var reachable = invariantType("reach");
+var enough = { form: 'enough' };
+var between = invariantType('between');
+var neighbor = invariantType('reachDirect');
+var reachableACL = invariantType('reachACL');
+var reachable = invariantType('reach');
 
 function Assertion(invariant, desired) {
     this.form = invariant.form;
@@ -585,10 +633,10 @@ function MachineRule(exclusive, optionalArgs) {
     }
 }
 
-function Connection(ports, to) {
+function Connection(from, ports) {
     this.minPort = ports.min;
     this.maxPort = ports.max;
-    this.to = to;
+    this.from = from;
 }
 
 function Range(min, max) {
@@ -614,7 +662,6 @@ function resetGlobals() {
 
 module.exports = {
     Assertion,
-    Connection,
     Container,
     Deployment,
     Image,

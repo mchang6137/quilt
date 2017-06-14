@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"errors"
 	"reflect"
 	"strconv"
 	"testing"
@@ -10,7 +11,6 @@ import (
 	"github.com/quilt/quilt/cluster/machine"
 	"github.com/quilt/quilt/db"
 	"github.com/quilt/quilt/join"
-	"github.com/quilt/quilt/stitch"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -48,6 +48,8 @@ type fakeProvider struct {
 	stopRequests []string
 	updateIPs    []ipRequest
 	aclRequests  []acl.ACL
+
+	listError error
 }
 
 func fakeValidRegions(p db.Provider) []string {
@@ -80,6 +82,10 @@ func (p *fakeProvider) clearLogs() {
 }
 
 func (p *fakeProvider) List() ([]machine.Machine, error) {
+	if p.listError != nil {
+		return nil, p.listError
+	}
+
 	var machines []machine.Machine
 	for _, machine := range p.machines {
 		machines = append(machines, machine)
@@ -125,13 +131,6 @@ func (p *fakeProvider) UpdateFloatingIPs(machines []machine.Machine) error {
 	}
 
 	return nil
-}
-
-func (p *fakeProvider) Connect(namespace string) error { return nil }
-
-func (p *fakeProvider) ChooseSize(ram stitch.Range, cpu stitch.Range,
-	maxPrice float64) string {
-	return ""
 }
 
 func newTestCluster(namespace string) *cluster {
@@ -789,6 +788,17 @@ func TestMultiRegionDeploy(t *testing.T) {
 	assert.Empty(t, joinResult.boot)
 	assert.Empty(t, joinResult.stop)
 	assert.Len(t, joinResult.pairs, len(dbMachines))
+}
+
+func TestGetError(t *testing.T) {
+	_, err := cluster{
+		providers: map[instance]provider{
+			{db.Amazon, "us-west-1"}: &fakeProvider{
+				listError: errors.New("err"),
+			},
+		},
+	}.get()
+	assert.EqualError(t, err, "list Amazon-us-west-1: err")
 }
 
 func setNamespace(conn db.Conn, ns string) {

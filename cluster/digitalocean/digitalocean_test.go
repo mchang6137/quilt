@@ -160,12 +160,12 @@ func TestList(t *testing.T) {
 	mc.On("ListDroplets", mock.Anything).Return(nil, nil, errMock).Once()
 	machines, err = doClust.List()
 	assert.Nil(t, machines)
-	assert.EqualError(t, err, errMsg)
+	assert.EqualError(t, err, fmt.Sprintf("list droplets: %s", errMsg))
 
 	// Error ListFloatingIPs.
 	mc.On("ListFloatingIPs", mock.Anything).Return(nil, nil, errMock).Once()
 	_, err = doClust.List()
-	assert.EqualError(t, err, errMsg)
+	assert.EqualError(t, err, fmt.Sprintf("list floating IPs: %s", errMsg))
 
 	// Error PublicIPv4. We can't error PrivateIPv4 because of the two functions'
 	// similarities and the order that they are called in `List`.
@@ -183,21 +183,7 @@ func TestList(t *testing.T) {
 	mc.On("ListFloatingIPs", mock.Anything).Return(nil, &godo.Response{}, nil).Once()
 	machines, err = doClust.List()
 	assert.Nil(t, machines)
-	assert.EqualError(t, err, "no networks have been defined")
-
-	respBad := &godo.Response{
-		Links: &godo.Links{
-			Pages: &godo.Pages{
-				Prev: "badurl",
-				Last: "2",
-			},
-		},
-	}
-	mc.On("ListFloatingIPs", mock.Anything).Return(nil, &godo.Response{}, nil).Once()
-	mc.On("ListDroplets", mock.Anything).Return([]godo.Droplet{}, respBad, nil).Once()
-	machines, err = doClust.List()
-	assert.Nil(t, machines)
-	assert.EqualError(t, err, "parse badurl: invalid URI for request")
+	assert.EqualError(t, err, "get public IP: no networks have been defined")
 }
 
 func TestBoot(t *testing.T) {
@@ -362,7 +348,8 @@ func TestUpdateFloatingIPs(t *testing.T) {
 
 	mc.On("ListFloatingIPs", mock.Anything).Return(nil, nil, errMock).Once()
 	err := clst.UpdateFloatingIPs(nil)
-	assert.EqualError(t, err, fmt.Sprintf("list machines: %s", errMsg))
+	assert.EqualError(t, err,
+		fmt.Sprintf("list machines: list floating IPs: %s", errMsg))
 	mc.AssertExpectations(t)
 
 	// Test assigning a floating IP.

@@ -10,35 +10,18 @@ import (
 	"github.com/quilt/quilt/minion/docker"
 )
 
-func TestRunMaster(t *testing.T) {
+func TestSyncImages(t *testing.T) {
 	md, dk := docker.NewMock()
 	conn := db.New()
 
-	// Test only run on masters.
+	// Test building an image.
 	conn.Txn(db.AllTables...).Run(func(view db.Database) error {
-		m := view.InsertMinion()
-		m.Self = true
-		m.Role = db.Worker
-		m.PrivateIP = "8.8.8.8"
-		view.Commit(m)
-
 		im := view.InsertImage()
 		im.Name = "image"
 		view.Commit(im)
 		return nil
 	})
-	runOnce(conn, dk)
-	assert.Equal(t, md.Built, map[docker.BuildImageOptions]struct{}{},
-		"should not attempt to build on worker")
-
-	// Test building an image.
-	conn.Txn(db.AllTables...).Run(func(view db.Database) error {
-		m := view.SelectFromMinion(nil)[0]
-		m.Role = db.Master
-		view.Commit(m)
-		return nil
-	})
-	runOnce(conn, dk)
+	syncImages(conn, dk)
 
 	images := getImages(conn)
 	assert.Len(t, images, 1)
@@ -47,7 +30,7 @@ func TestRunMaster(t *testing.T) {
 
 	// Test ignoring already-built image.
 	md.ResetBuilt()
-	runOnce(conn, dk)
+	syncImages(conn, dk)
 
 	images = getImages(conn)
 	assert.Len(t, images, 1)

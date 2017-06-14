@@ -12,10 +12,10 @@ import (
 
 /*
 The registry submodule builds custom Dockerfiles. When a custom Dockerfile is
-deployed in a spec (e.g.`new Container(new Image("name", "dk"))`), a couple
+deployed in a blueprint (e.g.`new Container(new Image("name", "dk"))`), a couple
 things happen:
 1) On the leader, the engine reads the custom images from the Containers in the
-spec, and writes them to the Image table.
+blueprint, and writes them to the Image table.
 2) The registry submodule builds the images in the Image table, and updates
 their image ID with the ID of the built image.
 3) The scheduler schedules containers for which the image has been built.
@@ -26,21 +26,22 @@ restart containers running the custom image.
 4) The workers pull and run the image just like any other image.
 */
 
-// Run builds Docker images according to the Image table.
+// Run builds Docker images according to the Image table if the minion's Role is
+// Master, and does nothing otherwise.
 func Run(conn db.Conn, dk docker.Client) {
-	bootWait()
-
-	for range conn.TriggerTick(30, db.ImageTable).C {
-		runOnce(conn, dk)
-	}
-}
-
-func runOnce(conn db.Conn, dk docker.Client) {
-	self := conn.MinionSelf()
-	if self.Role != db.Master {
+	if conn.MinionSelf().Role != db.Master {
 		return
 	}
 
+	bootWait()
+	for range conn.TriggerTick(30, db.ImageTable).C {
+		syncImages(conn, dk)
+	}
+}
+
+// syncImages checks the Image table for any images that have not yet been
+// built, and builds them.
+func syncImages(conn db.Conn, dk docker.Client) {
 	var toBuild []db.Image
 	conn.Txn(db.ImageTable).Run(func(view db.Database) error {
 		toBuild = view.SelectFromImage(func(img db.Image) bool {
@@ -79,6 +80,7 @@ func updateRegistry(dk docker.Client, img db.Image) (string, error) {
 	return id, err
 }
 
+// bootWait blocks until the registry is ready to be pushed to.
 func bootWait() {
 	for {
 		_, err := http.Get("http://localhost:5000")
