@@ -85,7 +85,6 @@ func run(name string, args ...string) {
 	}
 	
 	if name == images.Monitor {
-		log.Infof("MICHAEL Cadvisor image started: %s", name)				
 		ro.Binds =  []string{"/:/rootfs:ro",
 				      "/var/run:/var/run:rw",
 				      "/sys:/sys:ro",
@@ -97,6 +96,9 @@ func run(name string, args ...string) {
 		ro.Privileged = true
 	}
 
+	//DANGER!!! Included here just for research purposes so that we can tag outgoing packets using net_cls labels. This is not possible unless we have the containers in the same privileged namespace. 
+	ro.Privileged = true
+	
 	log.Infof("Start Container: %s", name)
 	_, err = dk.Run(ro)
 	if err != nil {
