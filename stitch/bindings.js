@@ -629,7 +629,10 @@ function MachineRule(exclusive, optionalArgs) {
         this.region = optionalArgs.region;
     }
     if (optionalArgs.floatingIp) {
-      this.floatingIp = optionalArgs.floatingIp;
+	this.floatingIp = optionalArgs.floatingIp;
+    }
+    if (optionalArgs.diskSize) {
+	this.diskSize = optionalArgs.diskSize;
     }
 }
 

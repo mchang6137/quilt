@@ -77,10 +77,10 @@ func runWorkerOnce() {
 		"--proxy=on")
 
 	run(images.Monitor,
-		"--storage_duration=2h",
-		"--allow_dynamic_housekeeping=false",
+		"--storage_duration=5m0s",
+		"--allow_dynamic_housekeeping=true",
 		"--global_housekeeping_interval=3m0s",
-		"--housekeeping_interval=5s")
+		"--housekeeping_interval=1s")
 
 	run(images.Ovsdb, "ovsdb-server")
 	run(images.Ovsvswitchd, "ovs-vswitchd")
