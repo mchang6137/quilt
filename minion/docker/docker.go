@@ -130,6 +130,7 @@ func (dk Client) Run(opts RunOptions) (string, error) {
 	   exposedPorts = map[dkc.Port]struct{}{"50000/tcp": {}}
 	}
 
+	network_admin_opt := []string{"NET_ADMIN"}
 	hc := &dkc.HostConfig{
 		NetworkMode: opts.NetworkMode,
 		PidMode:     opts.PidMode,
@@ -140,6 +141,7 @@ func (dk Client) Run(opts RunOptions) (string, error) {
 		PublishAllPorts: opts.PublishAllPorts,
 		PortBindings: portBinding,
 		Binds: opts.Binds,
+		CapAdd: network_admin_opt,
 	}
 
 	var nc *dkc.NetworkingConfig

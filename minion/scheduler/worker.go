@@ -123,11 +123,14 @@ func doContainers(dk docker.Client, ifaces []interface{},
 func dockerRun(dk docker.Client, iface interface{}) {
 	dbc := iface.(db.Container)
 	log.WithField("container", dbc).Info("Start container")
-
+  
 	hostname := dbc.Hostname
 	if hostname != "" {
 		hostname += ".q"
 	}
+  
+	//Setting Privileged of the applications to be true just for the purpose of stress testing
+	//Otherwise very very dangerous!!! Not for production
 	_, err := dk.Run(docker.RunOptions{
 		Hostname:	   hostname,
 		Image:             dbc.Image,
@@ -142,6 +145,7 @@ func dockerRun(dk docker.Client, iface interface{}) {
 		NetworkMode: plugin.NetworkName,
 		DNS:         []string{ipdef.GatewayIP.String()},
 		DNSSearch:   []string{"q"},
+		Privileged: true,
 	})
 	if err != nil {
 		log.WithFields(log.Fields{

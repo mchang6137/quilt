@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 )
 
@@ -107,8 +108,15 @@ func (stitchr Range) Accepts(x float64) bool {
 	return stitchr.Min <= x && (stitchr.Max == 0 || x <= stitchr.Max)
 }
 
+var lookPath = exec.LookPath
+
 // FromFile gets a Stitch handle from a file on disk.
 func FromFile(filename string) (Stitch, error) {
+	if _, err := lookPath("node"); err != nil {
+		return Stitch{}, errors.New(
+			"failed to locate Node.js. Is it installed and in your PATH?")
+	}
+
 	stderr := bytes.NewBuffer(nil)
 	cmd := exec.Command("node", "-p",
 		fmt.Sprintf(
@@ -122,6 +130,9 @@ func FromFile(filename string) (Stitch, error) {
 	if err != nil {
 		return Stitch{}, errors.New(stderr.String())
 	}
+	// If there wasn't an error, still print stderr, in case there were any
+	// warnings or other non-fatal errors.
+	fmt.Fprint(os.Stderr, stderr.String())
 
 	return FromJSON(string(out))
 }

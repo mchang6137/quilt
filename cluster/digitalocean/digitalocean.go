@@ -26,8 +26,7 @@ import (
 const DefaultRegion string = "sfo1"
 
 // Regions supported by the Digital Ocean API
-var Regions = []string{"ams1", "ams2", "ams3", "blr1", "fra1", "lon1", "nyc1", "nyc2",
-	"nyc3", "sfo1", "sfo2", "sgp1", "tor1"}
+var Regions = []string{"nyc1", "nyc2", "lon1", "sfo1", "sfo2"}
 
 var apiKeyPath = ".digitalocean/key"
 
@@ -84,7 +83,7 @@ func (clst Cluster) List() (machines []machine.Machine, err error) {
 	for {
 		ips, resp, err := clst.client.ListFloatingIPs(floatingIPListOpt)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("list floating IPs: %s", err)
 		}
 
 		for _, ip := range ips {
@@ -105,7 +104,7 @@ func (clst Cluster) List() (machines []machine.Machine, err error) {
 	for {
 		droplets, resp, err := clst.client.ListDroplets(dropletListOpt)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("list droplets: %s", err)
 		}
 
 		for _, d := range droplets {
@@ -115,12 +114,12 @@ func (clst Cluster) List() (machines []machine.Machine, err error) {
 
 			pubIP, err := d.PublicIPv4()
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("get public IP: %s", err)
 			}
 
 			privIP, err := d.PrivateIPv4()
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("get private IP: %s", err)
 			}
 
 			machine := machine.Machine{
@@ -140,12 +139,7 @@ func (clst Cluster) List() (machines []machine.Machine, err error) {
 			break
 		}
 
-		page, err := resp.Links.CurrentPage()
-		if err != nil {
-			return nil, err
-		}
-
-		dropletListOpt.Page = page + 1
+		dropletListOpt.Page++
 	}
 	return machines, nil
 }
