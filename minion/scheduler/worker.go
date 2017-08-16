@@ -123,18 +123,15 @@ func doContainers(dk docker.Client, ifaces []interface{},
 func dockerRun(dk docker.Client, iface interface{}) {
 	dbc := iface.(db.Container)
 	log.WithField("container", dbc).Info("Start container")
-<<<<<<< HEAD
-=======
-  
 	hostname := dbc.Hostname
 	if hostname != "" {
 		hostname += ".q"
 	}
   
->>>>>>> 2fc6841... Merge branch 'cadviser' into cadviser
 	//Setting Privileged of the applications to be true just for the purpose of stress testing
 	//Otherwise very very dangerous!!! Not for production
 	_, err := dk.Run(docker.RunOptions{
+	        Hostname:          hostname,
 		Image:             dbc.Image,
 		Args:              dbc.Command,
 		Env:               dbc.Env,

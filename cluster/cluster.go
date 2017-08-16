@@ -323,7 +323,9 @@ func (clst cluster) syncACLs(adminACLs []string, appACLs []db.PortRange,
 
 	// Providers with at least one machine.
 	prvdrSet := map[instance]struct{}{}
+
 	for _, m := range machines {
+	    /*
 		if m.PublicIP != "" {
 			// XXX: Look into the minimal set of necessary ports.
 			acls = append(acls, acl.ACL{
@@ -331,7 +333,7 @@ func (clst cluster) syncACLs(adminACLs []string, appACLs []db.PortRange,
 				MinPort: 1,
 				MaxPort: 65535,
 			})
-		}
+		}*/
 		prvdrSet[instance{m.Provider, m.Region}] = struct{}{}
 	}
 

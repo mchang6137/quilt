@@ -65,6 +65,7 @@ type RunOptions struct {
 	Env               map[string]string
 	FilepathToContent map[string]string
 
+	Hostname    string
 	IP          string
 	NetworkMode string
 	DNS         []string
@@ -157,7 +158,7 @@ func (dk Client) Run(opts RunOptions) (string, error) {
 		}
 	}
 
-	id, err := dk.create(opts.Name, opts.Image, opts.Args, exposedPorts, opts.Labels, env,
+	id, err := dk.create(opts.Name, opts.Image, opts.Hostname, opts.Args, exposedPorts, opts.Labels, env,
 		opts.FilepathToContent, hc, nc)
 	if err != nil {
 		return "", err
@@ -390,7 +391,7 @@ func (dk Client) IsRunning(name string) (bool, error) {
 	return len(containers) != 0, nil
 }
 
-func (dk Client) create(name, image string, args []string, exposedPorts map[dkc.Port]struct{},
+func (dk Client) create(name, image string, hostname string, args []string, exposedPorts map[dkc.Port]struct{},
 	labels map[string]string, env []string, filepathToContent map[string]string,
 	hc *dkc.HostConfig, nc *dkc.NetworkingConfig) (string, error) {
 
@@ -402,6 +403,7 @@ func (dk Client) create(name, image string, args []string, exposedPorts map[dkc.
 		Name: name,
 		Config: &dkc.Config{
 			Image:  string(image),
+			Hostname: hostname,
 			Cmd:    args,
 			Labels: labels,
 			Env:    env,
