@@ -2,9 +2,9 @@ package client
 
 import (
 	"errors"
-	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 
@@ -29,6 +29,18 @@ func (c mockAPIClient) Deploy(ctx context.Context, in *pb.DeployRequest,
 	return &pb.DeployReply{}, nil
 }
 
+func (c mockAPIClient) QueryCounters(ctx context.Context, in *pb.CountersRequest,
+	opts ...grpc.CallOption) (*pb.CountersReply, error) {
+
+	return &pb.CountersReply{}, nil
+}
+
+func (c mockAPIClient) QueryMinionCounters(ctx context.Context, in *pb.
+	MinionCountersRequest, opts ...grpc.CallOption) (*pb.CountersReply, error) {
+
+	return &pb.CountersReply{}, nil
+}
+
 func (c mockAPIClient) Version(ctx context.Context, in *pb.VersionRequest,
 	opts ...grpc.CallOption) (*pb.VersionReply, error) {
 
@@ -45,10 +57,7 @@ func TestUnmarshalMachine(t *testing.T) {
 	}
 	c := clientImpl{pbClient: apiClient}
 	res, err := c.QueryMachines()
-	if err != nil {
-		t.Errorf("Unexpected error: %s", err.Error())
-		return
-	}
+	assert.NoError(t, err)
 
 	exp := []db.Machine{
 		{
@@ -60,11 +69,7 @@ func TestUnmarshalMachine(t *testing.T) {
 			PrivateIP: "9.9.9.9",
 		},
 	}
-
-	if !reflect.DeepEqual(exp, res) {
-		t.Errorf("Bad unmarshalling of machines: expected %v, got %v.",
-			exp, res)
-	}
+	assert.Equal(t, exp, res)
 }
 
 func TestUnmarshalContainer(t *testing.T) {
@@ -73,29 +78,35 @@ func TestUnmarshalContainer(t *testing.T) {
 	apiClient := mockAPIClient{
 		mockResponse: `[{"ID":1,"Pid":0,"IP":"","Mac":"","Minion":"",` +
 			`"DockerID":"docker-id","StitchID":"","Image":"image",` +
-			`"Command":["cmd","arg"],"Labels":["labelA","labelB"],` +
-			`"Env":null}]`,
+			`"Command":["cmd","arg"],"Env":null}]`,
 	}
 	c := clientImpl{pbClient: apiClient}
 	res, err := c.QueryContainers()
-	if err != nil {
-		t.Errorf("Unexpected error: %s", err.Error())
-		return
-	}
+	assert.NoError(t, err)
 
 	exp := []db.Container{
 		{
 			DockerID: "docker-id",
 			Image:    "image",
 			Command:  []string{"cmd", "arg"},
-			Labels:   []string{"labelA", "labelB"},
 		},
 	}
+	assert.Equal(t, exp, res)
+}
 
-	if !reflect.DeepEqual(exp, res) {
-		t.Errorf("Bad unmarshalling of containers: expected %v, got %v.",
-			exp, res)
+func TestUnmarshalImage(t *testing.T) {
+	t.Parallel()
+
+	apiClient := mockAPIClient{
+		mockResponse: `[{"ID":1,"Name":"foo","Dockerfile":"bar",` +
+			`"DockerID":"","Status":"building"}]`,
 	}
+	c := clientImpl{pbClient: apiClient}
+	res, err := c.QueryImages()
+	assert.NoError(t, err)
+	assert.Equal(t, []db.Image{
+		{ID: 1, Name: "foo", Dockerfile: "bar", Status: "building"},
+	}, res)
 }
 
 func TestUnmarshalError(t *testing.T) {
@@ -107,15 +118,7 @@ func TestUnmarshalError(t *testing.T) {
 	c := clientImpl{pbClient: apiClient}
 
 	_, err := c.QueryMachines()
-	if err == nil {
-		t.Error("Bad json should throw a unmarshalling error, but got nothing")
-	}
-
-	exp := "unexpected end of JSON input"
-	if err.Error() != exp {
-		t.Errorf("Bad json should throw a unmarshalling error:"+
-			"expected %s, got %s", exp, err.Error())
-	}
+	assert.EqualError(t, err, "unexpected end of JSON input")
 }
 
 func TestGrpcError(t *testing.T) {
@@ -128,11 +131,5 @@ func TestGrpcError(t *testing.T) {
 	c := clientImpl{pbClient: apiClient}
 
 	_, err := c.QueryMachines()
-	if err == nil {
-		t.Error("`Query` should have returned grpc errors, but got nothing")
-	}
-	if err.Error() != exp.Error() {
-		t.Errorf("`Query` should returned grpc errors: expected %s, got %s",
-			exp.Error(), err.Error())
-	}
+	assert.EqualError(t, err, "timeout")
 }

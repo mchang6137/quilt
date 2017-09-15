@@ -1,0 +1,5 @@
+# Directory used for compiled docs
+build
+
+# Compiled JS documentation
+_jsdoc.erb

@@ -14,7 +14,7 @@ type Machine struct {
 	/* Populated by the policy engine. */
 	StitchID    string
 	Role        Role
-	Provider    Provider
+	Provider    ProviderName
 	Region      string
 	Size        string
 	DiskSize    int
@@ -27,9 +27,26 @@ type Machine struct {
 	PublicIP  string
 	PrivateIP string
 
-	/* Populated by the foreman. */
-	Connected bool // Whether the minion on this machine has connected back.
+	/* Populated by the cluster. */
+	Status string
 }
+
+const (
+	// Booting represents that the machine is being booted by a cloud provider.
+	Booting = "booting"
+
+	// Connecting represents that the machine is booted, but we have not yet
+	// successfully connected.
+	Connecting = "connecting"
+
+	// Reconnecting represents that we connected at one point, but are
+	// currently disconnected.
+	Reconnecting = "reconnecting"
+
+	// Connected represents that we are currently connected to the machine's
+	// minion.
+	Connected = "connected"
+)
 
 // InsertMachine creates a new Machine and inserts it into 'db'.
 func (db Database) InsertMachine() Machine {
@@ -40,9 +57,8 @@ func (db Database) InsertMachine() Machine {
 
 // SelectFromMachine gets all machines in the database that satisfy the 'check'.
 func (db Database) SelectFromMachine(check func(Machine) bool) []Machine {
-	machineTable := db.accessTable(MachineTable)
-	result := []Machine{}
-	for _, row := range machineTable.rows {
+	var result []Machine
+	for _, row := range db.selectRows(MachineTable) {
 		if check == nil || check(row.(Machine)) {
 			result = append(result, row.(Machine))
 		}
@@ -101,8 +117,8 @@ func (m Machine) String() string {
 		tags = append(tags, fmt.Sprintf("Disk=%dGB", m.DiskSize))
 	}
 
-	if m.Connected {
-		tags = append(tags, "Connected")
+	if m.Status != "" {
+		tags = append(tags, m.Status)
 	}
 
 	return fmt.Sprintf("Machine-%d{%s}", m.ID, strings.Join(tags, ", "))
@@ -110,22 +126,13 @@ func (m Machine) String() string {
 
 func (m Machine) less(arg row) bool {
 	l, r := m, arg.(Machine)
-	upl := l.PublicIP != "" && l.PrivateIP != ""
-	upr := r.PublicIP != "" && r.PrivateIP != ""
-	downl := l.PublicIP == "" && l.PrivateIP == ""
-	downr := r.PublicIP == "" && r.PrivateIP == ""
-
 	switch {
 	case l.Role != r.Role:
 		return l.Role == Master || r.Role == ""
-	case upl != upr:
-		return upl
-	case downl != downr:
-		return !downl
-	case l.ID != r.ID:
-		return l.ID < r.ID
+	case l.CloudID != r.CloudID:
+		return l.CloudID > r.CloudID // Prefer non-zero IDs.
 	default:
-		return l.CloudID < r.CloudID
+		return l.ID < r.ID
 	}
 }
 

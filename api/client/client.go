@@ -1,15 +1,15 @@
 package client
 
-//go:generate mockery -name=Getter
+//go:generate mockery -name Client
 
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"time"
 
 	"github.com/quilt/quilt/api"
 	"github.com/quilt/quilt/api/pb"
+	"github.com/quilt/quilt/connection"
 	"github.com/quilt/quilt/db"
 
 	"golang.org/x/net/context"
@@ -19,9 +19,6 @@ import (
 const (
 	// The timeout for making requests to the daemon once we've connected.
 	requestTimeout = time.Minute
-
-	// The timeout for connecting to the daemon.
-	connectTimeout = 5 * time.Second
 )
 
 // Client provides methods to interact with the Quilt daemon.
@@ -42,64 +39,62 @@ type Client interface {
 	// Quilt daemon.
 	QueryConnections() ([]db.Connection, error)
 
-	// QueryLabels retrieves the label information tracked by the Quilt daemon.
-	QueryLabels() ([]db.Label, error)
+	// QueryLoadBalancers retrieves the load balancer information tracked by
+	// the Quilt daemon.
+	QueryLoadBalancers() ([]db.LoadBalancer, error)
 
-	// QueryClusters retrieves cluster information tracked by the Quilt daemon.
-	QueryClusters() ([]db.Cluster, error)
+	// QueryBlueprints retrieves blueprint information tracked by the Quilt daemon.
+	QueryBlueprints() ([]db.Blueprint, error)
+
+	// QueryCounters retrieves the debugging counters tracked with the Quilt daemon.
+	QueryCounters() ([]pb.Counter, error)
+
+	// QueryCounters retrieves the debugging counters tracked by a Quilt minion.
+	// Only defined on the daemon.
+	QueryMinionCounters(string) ([]pb.Counter, error)
+
+	// QueryImages retrieves the image information tracked by the Quilt daemon.
+	QueryImages() ([]db.Image, error)
 
 	// Deploy makes a request to the Quilt daemon to deploy the given deployment.
+	// Only defined on the daemon.
 	Deploy(deployment string) error
 
 	// Version retrieves the Quilt version of the remote daemon.
 	Version() (string, error)
-
-	// Host returns the server address the Client is connected to.
-	Host() string
 }
 
-// Getter provides methods for obtaining Quilt clients connected to various servers.
-type Getter interface {
-	// Client obtains a client connected to the given address.
-	Client(string) (Client, error)
-
-	// ContainerClient obtains a client connected to the host running the given
-	// container.
-	ContainerClient(Client, string) (Client, error)
-
-	// LeaderClient obtains a client connected to cluster leader.
-	LeaderClient(Client) (Client, error)
-}
+// Getter obtains a client connected to the given address.
+type Getter func(string, connection.Credentials) (Client, error)
 
 type clientImpl struct {
-	pbClient   pb.APIClient
-	cc         *grpc.ClientConn
-	serverHost string
+	pbClient pb.APIClient
+	cc       *grpc.ClientConn
 }
 
 // New creates a new Quilt client connected to `lAddr`.
-func New(lAddr string) (Client, error) {
+func New(lAddr string, creds connection.Credentials) (Client, error) {
 	proto, addr, err := api.ParseListenAddress(lAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	dialer := func(dialAddr string, t time.Duration) (net.Conn, error) {
-		return net.DialTimeout(proto, dialAddr, t)
-	}
-	cc, err := grpc.Dial(addr, grpc.WithDialer(dialer), grpc.WithInsecure(),
-		grpc.WithBlock(), grpc.WithTimeout(connectTimeout))
+	cc, err := connection.Client(proto, addr, creds.ClientOpts())
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			err = daemonTimeoutError{
+				host:         lAddr,
+				connectError: err,
+			}
+		}
 		return nil, err
 	}
 
 	pbClient := pb.NewAPIClient(cc)
-	host, _, _ := net.SplitHostPort(addr)
 	return clientImpl{
-		pbClient:   pbClient,
-		cc:         cc,
-		serverHost: host,
-	}, err
+		pbClient: pbClient,
+		cc:       cc,
+	}, nil
 }
 
 func query(pbClient pb.APIClient, table db.TableType) (interface{}, error) {
@@ -129,24 +124,30 @@ func query(pbClient pb.APIClient, table db.TableType) (interface{}, error) {
 			return nil, err
 		}
 		return etcds, nil
-	case db.LabelTable:
-		var labels []db.Label
-		if err := json.Unmarshal(replyBytes, &labels); err != nil {
+	case db.LoadBalancerTable:
+		var loadBalancers []db.LoadBalancer
+		if err := json.Unmarshal(replyBytes, &loadBalancers); err != nil {
 			return nil, err
 		}
-		return labels, nil
+		return loadBalancers, nil
 	case db.ConnectionTable:
 		var connections []db.Connection
 		if err := json.Unmarshal(replyBytes, &connections); err != nil {
 			return nil, err
 		}
 		return connections, nil
-	case db.ClusterTable:
-		var clusters []db.Cluster
-		if err := json.Unmarshal(replyBytes, &clusters); err != nil {
+	case db.BlueprintTable:
+		var blueprints []db.Blueprint
+		if err := json.Unmarshal(replyBytes, &blueprints); err != nil {
 			return nil, err
 		}
-		return clusters, nil
+		return blueprints, nil
+	case db.ImageTable:
+		var images []db.Image
+		if err := json.Unmarshal(replyBytes, &images); err != nil {
+			return nil, err
+		}
+		return images, nil
 	default:
 		panic(fmt.Sprintf("unsupported table type: %s", table))
 	}
@@ -197,24 +198,65 @@ func (c clientImpl) QueryConnections() ([]db.Connection, error) {
 	return rows.([]db.Connection), nil
 }
 
-// QueryLabels retrieves the label information tracked by the Quilt daemon.
-func (c clientImpl) QueryLabels() ([]db.Label, error) {
-	rows, err := query(c.pbClient, db.LabelTable)
+// QueryLoadBalancers retrieves the load balancer information tracked by the
+// Quilt daemon.
+func (c clientImpl) QueryLoadBalancers() ([]db.LoadBalancer, error) {
+	rows, err := query(c.pbClient, db.LoadBalancerTable)
 	if err != nil {
 		return nil, err
 	}
 
-	return rows.([]db.Label), nil
+	return rows.([]db.LoadBalancer), nil
 }
 
-// QueryClusters retrieves the cluster information tracked by the Quilt daemon.
-func (c clientImpl) QueryClusters() ([]db.Cluster, error) {
-	rows, err := query(c.pbClient, db.ClusterTable)
+// QueryBlueprints retrieves the blueprint information tracked by the Quilt daemon.
+func (c clientImpl) QueryBlueprints() ([]db.Blueprint, error) {
+	rows, err := query(c.pbClient, db.BlueprintTable)
 	if err != nil {
 		return nil, err
 	}
 
-	return rows.([]db.Cluster), nil
+	return rows.([]db.Blueprint), nil
+}
+
+// QueryCounters retrieves the debugging counters tracked with the Quilt daemon.
+func (c clientImpl) QueryCounters() ([]pb.Counter, error) {
+	ctx, _ := context.WithTimeout(context.Background(), requestTimeout)
+	reply, err := c.pbClient.QueryCounters(ctx, &pb.CountersRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	return parseCountersReply(reply), nil
+}
+
+// QueryCounters retrieves the debugging counters tracked by a Quilt minion.
+func (c clientImpl) QueryMinionCounters(host string) ([]pb.Counter, error) {
+	ctx, _ := context.WithTimeout(context.Background(), requestTimeout)
+	reply, err := c.pbClient.QueryMinionCounters(ctx,
+		&pb.MinionCountersRequest{Host: host})
+	if err != nil {
+		return nil, err
+	}
+
+	return parseCountersReply(reply), nil
+}
+
+func parseCountersReply(reply *pb.CountersReply) (counters []pb.Counter) {
+	for _, c := range reply.Counters {
+		counters = append(counters, *c)
+	}
+	return counters
+}
+
+// QueryImages retrieves the image information tracked by the Quilt daemon.
+func (c clientImpl) QueryImages() ([]db.Image, error) {
+	rows, err := query(c.pbClient, db.ImageTable)
+	if err != nil {
+		return nil, err
+	}
+
+	return rows.([]db.Image), nil
 }
 
 // Deploy makes a request to the Quilt daemon to deploy the given deployment.
@@ -234,6 +276,15 @@ func (c clientImpl) Version() (string, error) {
 	return version.Version, nil
 }
 
-func (c clientImpl) Host() string {
-	return c.serverHost
+// daemonTimeoutError represents when we are unable to connect to the Quilt
+// daemon because of a timeout.
+type daemonTimeoutError struct {
+	host         string
+	connectError error
+}
+
+func (err daemonTimeoutError) Error() string {
+	return fmt.Sprintf("Unable to connect to the Quilt daemon at %s: %s. "+
+		"Is the quilt daemon running? If not, you can start it with "+
+		"`quilt daemon`.", err.host, err.connectError.Error())
 }

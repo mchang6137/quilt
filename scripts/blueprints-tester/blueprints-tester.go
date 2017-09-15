@@ -11,8 +11,9 @@ import (
 
 func main() {
 	testsByName := map[string]func() error{
-		"TestReadme":     tests.TestReadme,
-		"TestBlueprints": tests.TestBlueprints,
+		"TestReadme":            tests.TestReadme,
+		"TestCIBlueprints":      tests.TestCIBlueprints,
+		"TestExampleBlueprints": tests.TestExampleBlueprints,
 	}
 
 	failed := false

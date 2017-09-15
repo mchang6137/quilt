@@ -1,620 +1,1061 @@
+/* eslint require-jsdoc: [1] valid-jsdoc: [1] */
+/* eslint-disable no-underscore-dangle */
 const crypto = require('crypto');
 const request = require('sync-request');
 const stringify = require('json-stable-stringify');
 const _ = require('underscore');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
 
 const githubCache = {};
+const objectHasKey = Object.prototype.hasOwnProperty;
+
+/**
+ * Gets the public key associated with a github username.
+ * @param {string} user - The GitHub username.
+ * @returns {string} The SSH key.
+ */
 function githubKeys(user) {
-    if (user in githubCache) {
-        return githubCache[user];
-    }
+  if (user in githubCache) {
+    return githubCache[user];
+  }
 
-    const response = request('GET', `https://github.com/${user}.keys`);
-    if (response.statusCode >= 300) {
-        // Handle any errors.
-        throw new Error(
-            `HTTP request for ${user}'s github keys failed with error ` +
+  const response = request('GET', `https://github.com/${user}.keys`);
+  if (response.statusCode >= 300) {
+    // Handle any errors.
+    throw new Error(
+      `HTTP request for ${user}'s github keys failed with error ` +
             `${response.statusCode}`);
-    }
+  }
 
-    const keys = response.getBody('utf8').trim().split('\n');
-    githubCache[user] = keys;
+  const keys = response.getBody('utf8').trim().split('\n');
+  githubCache[user] = keys;
 
-    return keys;
+  return keys;
+}
+
+// Both infraDirectory and getInfraPath are also defined in init-util.js.
+// This code duplication is ugly, but it significantly simplifies packaging
+// the `quilt init` code with the "@quilt/install" module.
+const infraDirectory = path.join(os.homedir(), '.quilt', 'infra');
+
+/**
+ * Returns the absolute path to the infrastructure with the given name.
+ * @private
+ *
+ * @param {string} infraName - The name of the infrastructure.
+ * @returns {string} The absolute path to the infrastructure file.
+ */
+function getInfraPath(infraName) {
+  return path.join(infraDirectory, `${infraName}.js`);
+}
+
+/**
+ * Returns a base infrastructure. The infrastructure can be deployed to simply
+ * by calling .deploy() on the returned object.
+ * The base infrastructure could be created with `quilt init`.
+ *
+ * @param {string} name - The name of the infrastructure, as passed to
+ *   `quilt init`.
+ * @returns {Deployment} A deployment object representing the infrastructure.
+ */
+function baseInfrastructure(name = 'default') {
+  if (typeof name !== 'string') {
+    throw new Error(`name must be a string; was ${stringify(name)}`);
+  }
+
+  const infraPath = getInfraPath(name);
+  if (!fs.existsSync(infraPath)) {
+    throw new Error(`no infrastructure called ${name}. Use 'quilt init' ` +
+      'to create a new infrastructure.');
+  }
+  const infraGetter = require(infraPath); // eslint-disable-line
+
+  // By passing this module to the infraGetter, the blueprint doesn't have to
+  // require Quilt directly and we thus don't have to `npm install` in the
+  // infrastructure directory, which would be messy.
+  return infraGetter(module.exports);
 }
 
 // The default deployment object. createDeployment overwrites this.
 global._quiltDeployment = new Deployment({});
 
 // The name used to refer to the public internet in the JSON description
-// of the network connections (connections to other services are referenced by
-// the name of the service, but since the public internet is not a service,
+// of the network connections (connections to other entities are referenced by
+// hostname, but since the public internet is not a container or load balancer,
 // we need a special label for it).
-var publicInternetLabel = 'public';
+const publicInternetLabel = 'public';
 
 // Global unique ID counter.
-var uniqueIDCounter = 0;
+let uniqueIDCounter = 0;
 
-// Overwrite the deployment object with a new one.
+/**
+ * Overwrites the deployment object with a new one.
+ *
+ * @param {Object} deploymentOpts - Options for the new deployment object.
+ * @returns {Deployment} A deployment object.
+ */
 function createDeployment(deploymentOpts) {
-    global._quiltDeployment = new Deployment(deploymentOpts);
-    return global._quiltDeployment;
+  global._quiltDeployment = new Deployment(deploymentOpts);
+  return global._quiltDeployment;
 }
 
-function Deployment(deploymentOpts) {
-    deploymentOpts = deploymentOpts || {};
+/**
+ * Creates a new deployment object with the given options.
+ * @constructor
+ *
+ * @param {Object} deploymentOpts - An object containing options that can tweak
+ *   the behavor of the namespace.  Options include: `maxPrice` which defines
+ *   the price that should be bid in spot auctions for preemptible machines,
+ *   `namespace` which instructs the deployment what namespace it should
+ *   operate in, and `adminACL` which defines what network traffic should be
+ *   allowed to access the deployment.
+ */
+function Deployment(deploymentOpts = {}) {
+  this.maxPrice = getNumber('maxPrice', deploymentOpts.maxPrice);
+  this.namespace = deploymentOpts.namespace || 'default-namespace';
+  this.adminACL = getStringArray('adminACL', deploymentOpts.adminACL);
 
-    this.maxPrice = deploymentOpts.maxPrice || 0;
-    this.namespace = deploymentOpts.namespace || 'default-namespace';
-    this.adminACL = deploymentOpts.adminACL || [];
+  checkExtraKeys(deploymentOpts, this);
 
-    this.machines = [];
-    this.containers = {};
-    this.services = [];
-    this.allowedInboundConnections = [];
-    this.placements = [];
-    this.invariants = [];
+  this.machines = [];
+  this.containers = new Set();
+  this.loadBalancers = [];
 }
 
-function omitSSHKey(key, value) {
-    if (key == 'sshKeys') {
-        return undefined;
-    }
-    return value;
-}
-
-// Returns a globally unique integer ID.
+/**
+ * @private
+ * @returns {integer} A globally unique integer ID.
+ */
 function uniqueID() {
-    return uniqueIDCounter++;
+  uniqueIDCounter += 1;
+  return uniqueIDCounter;
 }
 
-// key creates a string key for objects that have a _refID, namely Containers
-// and Machines.
-function key(obj) {
-    var keyObj = obj.clone();
-    keyObj._refID = '';
-    return stringify(keyObj, { replacer: omitSSHKey });
-}
-
-// setQuiltIDs deterministically sets the id field of objects based on
-// their attributes. The _refID field is required to differentiate between multiple
-// references to the same object, and multiple instantiations with the exact
-// same attributes.
+/**
+ * Deterministically sets the id field of objects based on their attributes. The
+ * _refID field is required to differentiate between multiple references to the
+ * same object, and multiple instantiations with the exact same attributes.
+ * @private
+ *
+ * @param {Object[]} objs - An array of objects.
+ * @returns {void}
+ */
 function setQuiltIDs(objs) {
-    // The refIDs for each identical instance.
-    var refIDs = {};
-    objs.forEach(function(obj) {
-        var k = key(obj);
-        if (!refIDs[k]) {
-            refIDs[k] = [];
-        }
-        refIDs[k].push(obj._refID);
-    });
+  // The refIDs for each identical instance.
+  const refIDs = {};
+  objs.forEach((obj) => {
+    const k = obj.hash();
+    if (!refIDs[k]) {
+      refIDs[k] = [];
+    }
+    refIDs[k].push(obj._refID);
+  });
 
-    // If there are multiple references to the same object, there will be duplicate
-    // refIDs.
-    Object.keys(refIDs).forEach(function(k) {
-        refIDs[k] = _.sortBy(_.uniq(refIDs[k]), _.identity);
-    });
+  // If there are multiple references to the same object, there will be
+  // duplicate refIDs.
+  Object.keys(refIDs).forEach((k) => {
+    refIDs[k] = _.sortBy(_.uniq(refIDs[k]), _.identity);
+  });
 
-    objs.forEach(function(obj) {
-        var k = key(obj);
-        obj.id = hash(k + refIDs[k].indexOf(obj._refID));
-    });
+  objs.forEach((obj) => {
+    const k = obj.hash();
+    const h = hash(k + refIDs[k].indexOf(obj._refID));
+    obj.id = h; // eslint-disable-line no-param-reassign
+  });
 }
 
+/**
+ * Cryptographically hashes the given string.
+ * @private
+ *
+ * @param {string} str - The string to be hashed.
+ * @returns {string} The hash.
+ */
 function hash(str) {
-    const shaSum = crypto.createHash('sha1');
-    shaSum.update(str);
-    return shaSum.digest('hex');
+  const shaSum = crypto.createHash('sha1');
+  shaSum.update(str);
+  return shaSum.digest('hex');
 }
 
 // Convert the deployment to the QRI deployment format.
-Deployment.prototype.toQuiltRepresentation = function() {
-    this.vet();
+Deployment.prototype.toQuiltRepresentation = function toQuiltRepresentation() {
+  setQuiltIDs(this.machines);
+  setQuiltIDs(this.containers);
 
-    setQuiltIDs(this.machines);
+  const loadBalancers = [];
+  let connections = [];
+  let placements = [];
+  const containers = [];
 
-    var containers = [];
-    this.services.forEach(function(serv) {
-        serv.containers.forEach(function(c) {
-            containers.push(c);
-        });
+  // Convert the load balancers.
+  this.loadBalancers.forEach((lb) => {
+    connections = connections.concat(lb.getQuiltConnections());
+    loadBalancers.push({
+      name: lb.name,
+      hostnames: lb.containers.map(c => c.hostname),
     });
-    setQuiltIDs(containers);
+  });
 
-    // Map from container ID to container.
-    var containerMap = {};
+  this.containers.forEach((c) => {
+    connections = connections.concat(c.getQuiltConnections());
+    placements = placements.concat(c.getPlacementsWithID());
+    containers.push(c.toQuiltRepresentation());
+  });
 
-    var services = [];
-    var connections = [];
-    var placements = [];
+  const quiltDeployment = {
+    machines: this.machines,
+    loadBalancers,
+    containers,
+    connections,
+    placements,
 
-    // For each service, convert the associated connections and placement rules.
-    // Also, aggregate all containers referenced by services.
-    this.services.forEach(function(service) {
-        connections = connections.concat(service.getQuiltConnections());
-        placements = placements.concat(service.getQuiltPlacements());
-
-        // Collect the containers IDs, and add them to the container map.
-        var ids = [];
-        service.containers.forEach(function(container) {
-            ids.push(container.id);
-            containerMap[container.id] = container;
-        });
-
-        services.push({
-            name: service.name,
-            ids: ids,
-            annotations: service.annotations
-        });
-    });
-
-    var containers = [];
-    Object.keys(containerMap).forEach(function(cid) {
-        containers.push(containerMap[cid]);
-    });
-
-    return {
-        machines: this.machines,
-        labels: services,
-        containers: containers,
-        connections: connections,
-        placements: placements,
-        invariants: this.invariants,
-
-        namespace: this.namespace,
-        adminACL: this.adminACL,
-        maxPrice: this.maxPrice
-    };
+    namespace: this.namespace,
+    adminACL: this.adminACL,
+    maxPrice: this.maxPrice,
+  };
+  vet(quiltDeployment);
+  return quiltDeployment;
 };
 
-// Check if all referenced services in connections and placements are really deployed.
-Deployment.prototype.vet = function() {
-    var labelMap = {};
-    this.services.forEach(function(service) {
-        labelMap[service.name] = true;
+/**
+ * Checks if all referenced containers in connections and load balancers are
+ * really deployed.
+ * @private
+ *
+ * @param {Deployment} deployment - A deployment object.
+ * @returns {void}
+ */
+function vet(deployment) {
+  const lbHostnames = deployment.loadBalancers.map(l => l.name);
+  const containerHostnames = deployment.containers.map(c => c.hostname);
+  const hostnames = lbHostnames.concat(containerHostnames);
+
+  const hostnameMap = { [publicInternetLabel]: true };
+  hostnames.forEach((hostname) => {
+    if (hostnameMap[hostname] !== undefined) {
+      throw new Error(`hostname "${hostname}" used multiple times`);
+    }
+    hostnameMap[hostname] = true;
+  });
+
+  deployment.connections.forEach((conn) => {
+    [conn.from, conn.to].forEach((host) => {
+      if (!hostnameMap[host]) {
+        throw new Error(`connection ${stringify(conn)} references ` +
+                    `an undefined hostname: ${host}`);
+      }
     });
+  });
 
-    var dockerfiles = {};
-    var hostnames = {};
-    this.services.forEach(function(service) {
-        service.allowedInboundConnections.forEach(function(conn) {
-            var from = conn.from.name;
-            if (!labelMap[from]) {
-                throw new Error(`${service.name} allows connections from ` +
-                    `an undeployed service: ${from}`);
-            }
-        });
-
-        var hasFloatingIp = false;
-        service.placements.forEach(function(plcm) {
-            if (plcm.floatingIp) {
-                hasFloatingIp = true;
-            }
-
-            var otherLabel = plcm.otherLabel;
-            if (otherLabel !== undefined && !labelMap[otherLabel]) {
-                throw new Error(`${service.name} has a placement in terms ` +
-                    `of an undeployed service: ${otherLabel}`);
-            }
-        });
-
-        if (hasFloatingIp && service.incomingPublic.length
-            && service.containers.length > 1) {
-            throw new Error(`${service.name} has a floating IP and ` +
-                `multiple containers. This is not yet supported.`);
-        }
-
-        service.containers.forEach(function(c) {
-            var name = c.image.name;
-            if (dockerfiles[name] != undefined && dockerfiles[name] != c.image.dockerfile) {
-                throw new Error(`${name} has differing Dockerfiles`);
-            }
-            dockerfiles[name] = c.image.dockerfile;
-
-            if (c.hostname !== undefined) {
-                if (hostnames[c.hostname]) {
-                    throw new Error(`hostname "${c.hostname}" used for ` +
-                        `multiple containers`);
-                }
-                hostnames[c.hostname] = true;
-            }
-        })
-    });
-};
+  const dockerfiles = {};
+  deployment.containers.forEach((c) => {
+    const name = c.image.name;
+    if (dockerfiles[name] !== undefined &&
+                dockerfiles[name] !== c.image.dockerfile) {
+      throw new Error(`${name} has differing Dockerfiles`);
+    }
+    dockerfiles[name] = c.image.dockerfile;
+  });
+}
 
 // deploy adds an object, or list of objects, to the deployment.
 // Deployable objects must implement the deploy(deployment) interface.
-Deployment.prototype.deploy = function(toDeployList) {
-    if (toDeployList.constructor !== Array) {
-        toDeployList = [toDeployList];
+Deployment.prototype.deploy = function deploy(list) {
+  let toDeployList = list;
+  if (!Array.isArray(toDeployList)) {
+    toDeployList = [toDeployList];
+  }
+
+  const that = this;
+  toDeployList.forEach((toDeploy) => {
+    if (!toDeploy.deploy) {
+      throw new Error('only objects that implement ' +
+                '"deploy(deployment)" can be deployed');
     }
-
-    var that = this;
-    toDeployList.forEach(function(toDeploy) {
-        if (!toDeploy.deploy) {
-            throw new Error(`only objects that implement ` +
-                `"deploy(deployment)" can be deployed`);
-        }
-        toDeploy.deploy(that);
-    });
+    toDeploy.deploy(that);
+  });
 };
 
-Deployment.prototype.assert = function(rule, desired) {
-    this.invariants.push(new Assertion(rule, desired));
-};
+/**
+ * Creates a new LoadBalancer object which represents a collection of
+ * containers behind a load balancer.
+ * @implements {Connectable}
+ * @constructor
+ *
+ * @param {string} name - The name of the load balancer.
+ * @param {Container[]} containers - The containers behind the load balancer.
+ */
+function LoadBalancer(name, containers) {
+  if (typeof name !== 'string') {
+    throw new Error(`name must be a string; was ${stringify(name)}`);
+  }
+  this.name = uniqueHostname(name);
+  this.containers = boxContainers(containers);
 
-function Service(name, containers) {
-    this.name = uniqueLabelName(name);
-    this.containers = containers;
-    this.annotations = [];
-    this.placements = [];
-
-    this.allowedInboundConnections = [];
-    this.outgoingPublic = [];
-    this.incomingPublic = [];
+  this.allowedInboundConnections = [];
 }
 
-// Get the Quilt hostname that represents the entire service.
-Service.prototype.hostname = function() {
-    return this.name + '.q';
+// Get the Quilt hostname that represents the entire load balancer.
+LoadBalancer.prototype.hostname = function lbHostname() {
+  return `${this.name}.q`;
 };
 
-// Get a list of Quilt hostnames that address the containers within the service.
-Service.prototype.children = function() {
-    var i;
-    var res = [];
-    for (i = 1; i < this.containers.length + 1; i++) {
-        res.push(i + '.' + this.name + '.q');
-    }
-    return res;
+LoadBalancer.prototype.deploy = function lbDeploy(deployment) {
+  deployment.loadBalancers.push(this);
 };
 
-Service.prototype.annotate = function(annotation) {
-    this.annotations.push(annotation);
-};
+/**
+ * Allows inbound connections to the load balancer. Note that this does not
+ * allow direct connections to the containers behind the load balancer.
+ *
+ * @param {Container|Container[]} srcArg - The containers that can open
+ *   connections to this load balancer.
+ * @param {int|Port|PortRange} portRange - The ports on which containers can
+ *   open connections.
+ * @returns {void}
+ */
+LoadBalancer.prototype.allowFrom = function lbAllowFrom(srcArg, portRange) {
+  let src;
+  try {
+    src = boxContainers(srcArg);
+  } catch (err) {
+    throw new Error('Load Balancers can only allow traffic from containers. ' +
+          'Check that you\'re allowing connections from a Container ' +
+          'or list of containers and not from a Load Balancer or other object.');
+  }
 
-Service.prototype.canReach = function(target) {
-    if (target === publicInternet) {
-        return reachable(this.name, publicInternetLabel);
-    }
-    return reachable(this.name, target.name);
-};
-
-Service.prototype.canReachACL = function(target) {
-    return reachableACL(this.name, target.name);
-};
-
-Service.prototype.between = function(src, dst) {
-    return between(src.name, this.name, dst.name);
-};
-
-Service.prototype.neighborOf = function(target) {
-    return neighbor(this.name, target.name);
-};
-
-
-Service.prototype.deploy = function(deployment) {
-    deployment.services.push(this);
-};
-
-Service.prototype.connect = function(range, to) {
-    console.warn('Warning: connect is deprecated; switch to using ' +
-        'allowFrom. If you previously used a.connect(5, b), you should ' +
-        'now use b.allowFrom(a, 5).');
-    if (!(to === publicInternet || to instanceof Service)) {
-        throw new Error(`Services can only connect to other services. ` +
-            `Check that you're connecting to a service, and not to a ` +
-            `Container or other object.`);
-    }
-    to.allowFrom(this, range);
-}
-
-Service.prototype.allowFrom = function(sourceService, portRange) {
-    portRange = boxRange(portRange);
-    if (sourceService === publicInternet) {
-        return this.allowFromPublic(portRange);
-    }
-    if (!(sourceService instanceof Service)) {
-        throw new Error(`Services can only connect to other services. ` +
-            `Check that you're allowing connections from a service, and ` +
-            `not from a Container or other object.`);
-    }
+  src.forEach((c) => {
     this.allowedInboundConnections.push(
-        new Connection(sourceService, portRange));
+      new Connection(c, boxRange(portRange)));
+  });
 };
 
-// publicInternet is an object that looks like another service that can
-// allow inbound connections. However, it is actually just syntactic sugar to hide
-// the allowOutboundPublic and allowFromPublic functions.
-var publicInternet = {
-    connect: function(range, to) {
-        console.warn('Warning: connect is deprecated; switch to using ' +
-            'allowFrom. Instead of publicInternet.connect(port, service), ' +
-            'use service.allowFrom(publicInternet, port).');
-        to.allowFromPublic(range);
-    },
-    allowFrom: function(sourceService, portRange) {
-        sourceService.allowOutboundPublic(portRange);
-    },
-    canReach: function(to) {
-        return reachable(publicInternetLabel, to.name);
+// publicInternet is an object that looks like another container that can
+// allow inbound connections. However, it is actually just syntactic sugar
+// to hide the allowOutboundPublic and allowFromPublic functions.
+/**
+ * @implements {Connectable}
+ */
+const publicInternet = {
+  allowFrom(srcArg, portRange) {
+    let src;
+    try {
+      src = boxContainers(srcArg);
+    } catch (err) {
+      throw new Error('Only containers can connect to public. ' +
+                'Check that you\'re allowing connections from a Container or ' +
+                'list of containers and not from a Load Balancer or other object.');
     }
+
+    src.forEach((c) => {
+      c.allowOutboundPublic(portRange);
+    });
+  },
 };
 
-// Allow outbound traffic from the service to public internet.
-Service.prototype.connectToPublic = function(range) {
-    console.warn('Warning: connectToPublic is deprecated; switch to using ' +
-        'allowOutboundPublic.');
-    this.allowOutboundPublic(range);
+LoadBalancer.prototype.getQuiltConnections = function lbGetQuiltConnections() {
+  return this.allowedInboundConnections.map(conn => ({
+    from: conn.from.hostname,
+    to: this.name,
+    minPort: conn.minPort,
+    maxPort: conn.maxPort,
+  }));
+};
+
+/**
+ * Boxes a container into a list of containers, or do nothing if `x` is a list
+ * of containers.
+ * @private
+ *
+ * @param {Container|Container[]} x - A container object, or a list of
+ *   container objects.
+ * @returns {Container[]} The resulting list of container objects.
+ */
+function boxContainers(x) {
+  if (x instanceof Container) {
+    return [x];
+  }
+
+  assertContainerList(x);
+  return x;
 }
 
-Service.prototype.allowOutboundPublic = function(range) {
-    range = boxRange(range);
-    if (range.min != range.max) {
-        throw new Error(`public internet can only connect to single ports ` +
-            `and not to port ranges`);
+/**
+ * Asserts that `containers` is an array of Container objects.
+ * @private
+ *
+ * @param {Container[]} containers - An array of container objects.
+ * @returns {void}
+ */
+function assertContainerList(containers) {
+  if (!Array.isArray(containers)) {
+    throw new Error('not an array of Containers (was ' +
+            `${stringify(containers)})`);
+  }
+  for (let i = 0; i < containers.length; i += 1) {
+    if (!(containers[i] instanceof Container)) {
+      throw new Error('not an array of Containers; item ' +
+                `at index ${i} (${stringify(containers[i])}) is not a ` +
+                'Container');
     }
-    this.outgoingPublic.push(range);
-};
-
-// Allow inbound traffic from public internet to the service.
-Service.prototype.connectFromPublic = function(range) {
-    console.warn('Warning: connectFromPublic is deprecated; switch to ' +
-        'allowFromPublic');
-    this.allowFromPublic(range);
+  }
 }
 
-Service.prototype.allowFromPublic = function(range) {
-    range = boxRange(range);
-    if (range.min != range.max) {
-        throw new Error(`public internet can only connect to single ports ` +
-            `and not to port ranges`);
-    }
-    this.incomingPublic.push(range);
-};
+let hostnameCount = {};
 
-Service.prototype.place = function(rule) {
-    this.placements.push(rule);
-};
-
-Service.prototype.getQuiltConnections = function() {
-    var connections = [];
-    var that = this;
-
-    this.allowedInboundConnections.forEach(function(conn) {
-        connections.push({
-            from: conn.from.name,
-            to: that.name,
-            minPort: conn.minPort,
-            maxPort: conn.maxPort
-        });
-    });
-
-    this.outgoingPublic.forEach(function(rng) {
-        connections.push({
-            from: that.name,
-            to: publicInternetLabel,
-            minPort: rng.min,
-            maxPort: rng.max
-        });
-    });
-
-    this.incomingPublic.forEach(function(rng) {
-        connections.push({
-            from: publicInternetLabel,
-            to: that.name,
-            minPort: rng.min,
-            maxPort: rng.max
-        });
-    });
-
-    return connections;
-};
-
-Service.prototype.getQuiltPlacements = function() {
-    var placements = [];
-    var that = this;
-    this.placements.forEach(function(placement) {
-        placements.push({
-            targetLabel: that.name,
-            exclusive: placement.exclusive,
-
-            otherLabel: placement.otherLabel || '',
-            provider: placement.provider || '',
-            size: placement.size || '',
-            region: placement.region || '',
-            floatingIp: placement.floatingIp || ''
-        });
-    });
-    return placements;
-};
-
-var labelNameCount = {};
-function uniqueLabelName(name) {
-    if (!(name in labelNameCount)) {
-        labelNameCount[name] = 0;
-    }
-    var count = ++labelNameCount[name];
-    if (count == 1) {
-        return name;
-    }
-    return name + labelNameCount[name];
+/**
+ * @private
+ * @param {string} name - The name that the generated hostname should be based
+ *   on.
+ * @returns {string} The unique hostname.
+ */
+function uniqueHostname(name) {
+  if (!(name in hostnameCount)) {
+    hostnameCount[name] = 1;
+    return name;
+  }
+  hostnameCount[name] += 1;
+  return uniqueHostname(name + hostnameCount[name]);
 }
 
-// Box raw integers into range.
+/**
+ * Boxes raw integers into range.
+ * @private
+ *
+ * @param {integer|Range} x - The integer to be boxed into the range (or
+ *   undefined).
+ * @returns {Range} The resulting Range object.
+ */
 function boxRange(x) {
-    if (x === undefined) {
-        return new Range(0, 0);
-    }
-    if (typeof x === 'number') {
-        return new Range(x, x);
-    }
-    if (!(x instanceof Range)) {
-        throw new Error('Input argument must be a number or a Range')
-    }
-    return x
+  if (x === undefined) {
+    return new Range(0, 0);
+  }
+  if (typeof x === 'number') {
+    return new Range(x, x);
+  }
+  if (!(x instanceof Range)) {
+    throw new Error('Input argument must be a number or a Range');
+  }
+  return x;
 }
 
+/**
+  * Throws an error if the first object contains any keys that do not appear in
+  * the second object.
+  * This function is useful for checking if the user passed invalid options to
+  * functions that take optional arguments. Namely, since all valid user given
+  * optional arguments are added as properties of the new object, any key
+  * that appears in the optional argument but not as a property of the object
+  * must be an unexpected optional argument.
+  * @private
+  *
+  * @param {Object} opts - The Object to check for redundant keys.
+  * @param {Object} obj - The object to compare against.
+  * @returns {void}
+  * @throws Throws an error if redundant keys are found in `opts`.
+  */
+function checkExtraKeys(opts, obj) {
+  // Sometimes, prototype constructors are called internally by Quilt. In these
+  // cases, an existing object is passed as the optional argument, and the
+  // optional argument thus contains not just the keys passed by the user, but
+  // also the keys Quilt set on the object, as well as all the prototype
+  // methods. Since we only want to check the optional arguments passed by the
+  // user, we skip all calls internally from Quilt (indicated by having the
+  // refID set in the options).
+  if (objectHasKey.call(opts, '_refID')) { return; }
+
+  const extras = Object.keys(opts).filter(key => !objectHasKey.call(obj, key));
+
+  if (extras.length > 0) {
+    throw new Error('Unrecognized keys passed to ' +
+      `${obj.constructor.name} constructor: ${extras}`);
+  }
+}
+
+/**
+ * Forces `arg` to be a number, even if it's undefined.
+ * @private
+ *
+ * @param {string} argName - The name of the number (for logging).
+ * @param {number} arg - The number that might be undefined.
+ * @returns {number} Zero if `arg` is not defined, and otherwise ensures that
+ *   `arg` is a number and then returns it.
+ */
+function getNumber(argName, arg) {
+  if (arg === undefined) {
+    return 0;
+  }
+  if (typeof arg === 'number') {
+    return arg;
+  }
+  throw new Error(`${argName} must be a number (was: ${stringify(arg)})`);
+}
+
+/**
+ * Forces `arg` to be a string, even if it's undefined.
+ * @private
+ *
+ * @param {string} argName - The name of the string (for logging).
+ * @param {string} arg - The arg that might be undefined.
+ * @returns {string} An empty string if `arg` is not defined, and otherwise
+ *   ensures that `arg` is a string and then returns it.
+ */
+function getString(argName, arg) {
+  if (arg === undefined) {
+    return '';
+  }
+  if (typeof arg === 'string') {
+    return arg;
+  }
+  throw new Error(`${argName} must be a string (was: ${stringify(arg)})`);
+}
+
+/**
+ * @private
+ * @param {string} argName - The name of `arg` (for logging).
+ * @param {Object.<string, string>} arg - The map of strings.
+ * @returns {Object.<string, string>} An empty object if `arg` is not defined,
+ *   and otherwise ensures that `arg` is an object with string keys and values
+ *   and then returns it.
+ */
+function getStringMap(argName, arg) {
+  if (arg === undefined) {
+    return {};
+  }
+  if (typeof arg !== 'object') {
+    throw new Error(`${argName} must be a string map ` +
+            `(was: ${stringify(arg)})`);
+  }
+  Object.keys(arg).forEach((k) => {
+    if (typeof k !== 'string') {
+      throw new Error(`${argName} must be a string map (key ` +
+                `${stringify(k)} is not a string)`);
+    }
+    if (typeof arg[k] !== 'string') {
+      throw new Error(`${argName} must be a string map (value ` +
+                `${stringify(arg[k])} associated with ${k} is not a string)`);
+    }
+  });
+  return arg;
+}
+
+/**
+ * Verifies `arg` is an array of strings or undefined.
+ * @private
+ *
+ * @param {string} argName - The name of `arg` (for logging).
+ * @param {string[]} arg - The array of strings.
+ * @returns {string[]} Returns an empty array if `arg` is not
+ *   defined, and otherwise ensures that `arg` is an array of strings and then
+ *   returns it.
+ */
+function getStringArray(argName, arg) {
+  if (arg === undefined) {
+    return [];
+  }
+  if (!Array.isArray(arg)) {
+    throw new Error(`${argName} must be an array of strings ` +
+            `(was: ${stringify(arg)})`);
+  }
+  for (let i = 0; i < arg.length; i += 1) {
+    if (typeof arg[i] !== 'string') {
+      throw new Error(`${argName} must be an array of strings. ` +
+                `Item at index ${i} (${stringify(arg[i])}) is not a ` +
+                'string.');
+    }
+  }
+  return arg;
+}
+
+/**
+ * @private
+ * @param {string} argName - The name of `arg` (for logging).
+ * @param {boolean} arg - The boolean that might be undefined.
+ * @returns {boolean} False if `arg` is not defined, and otherwise ensures
+ *   that `arg` is a boolean and then returns it.
+ */
+function getBoolean(argName, arg) {
+  if (arg === undefined) {
+    return false;
+  }
+  if (typeof arg === 'boolean') {
+    return arg;
+  }
+  throw new Error(`${argName} must be a boolean (was: ${stringify(arg)})`);
+}
+
+/**
+ * Creates a new Machine object, which represents a machine to be deployed.
+ * @constructor
+ *
+ * @example <caption>Create a template Machine on Amazon, and then use the
+ * template to create a master and 2 workers.</caption>
+ * const baseMachine = new Machine({provider: 'Amazon'});
+ * const master = baseMachine.asMaster();
+ * const workers = baseMachine.asWorker().replicate(2);
+ *
+ * @param {Object.<string, string>} [optionalArgs] - Optional arguments that
+ *   modify the machine.
+ * @param {string} [optionalArgs.provider] - The cloud provider that the machine
+ *   should be launched in. Accepted values are Amazon, DigitalOcean, Google,
+ *   and Vagrant. This argument is optional, but the provider attribute of the
+ *   machine must be set before it is deployed.
+ * @param {string} [optionalArgs.role] - The role the machine will run as
+ *   (accepted value are Master and Worker). A Machine's role must be set before
+ *   it can be deployed.  This argument is not required, so that users can
+ *   create a template to use for all machines in the cluster;
+ *   {@link Machine#asWorker} and {@link Machine#asMaster} can be called on the
+ *   template to create a machine with the appropriate role, as in the example.
+ * @param {string} [optionalArgs.region] - The region the machine will run-in
+ *   (provider-specific; e.g., for Amazon, this could be 'us-west-2').
+ * @param {string} [optionalArgs.size] - The instance type (provider-specific).
+ * @param {Range|int} [optionalArgs.cpu] - The desired number of CPUs.
+ * @param {Range|int} [optionalArgs.ram] - The desired amount of RAM in GiB.
+ * @param {int} [optionalArgs.diskSize] - The desired amount of disk space in GB.
+ * @param {string} [optionalArgs.floatingIp] - A reserved IP to associate with
+ *   the machine.
+ * @param {string[]} [optionalArgs.sshKeys] - Public keys to allow to login to
+ *   the machine.
+ * @param {boolean} [optionalArgs.preemptible=false] - Whether the machine
+ *   should be preemptible. Only supported on the Amazon provider.
+ */
 function Machine(optionalArgs) {
-    this._refID = uniqueID();
+  this._refID = uniqueID();
 
-    this.provider = optionalArgs.provider || '';
-    this.role = optionalArgs.role || '';
-    this.region = optionalArgs.region || '';
-    this.size = optionalArgs.size || '';
-    this.floatingIp = optionalArgs.floatingIp || '';
-    this.diskSize = optionalArgs.diskSize || 0;
-    this.sshKeys = optionalArgs.sshKeys || [];
-    this.cpu = boxRange(optionalArgs.cpu);
-    this.ram = boxRange(optionalArgs.ram);
-    this.preemptible = optionalArgs.preemptible !== undefined ? optionalArgs.preemptible : false;
+  this.provider = getString('provider', optionalArgs.provider);
+  this.role = getString('role', optionalArgs.role);
+  this.region = getString('region', optionalArgs.region);
+  this.size = getString('size', optionalArgs.size);
+  this.floatingIp = getString('floatingIp', optionalArgs.floatingIp);
+  this.diskSize = getNumber('diskSize', optionalArgs.diskSize);
+  this.sshKeys = getStringArray('sshKeys', optionalArgs.sshKeys);
+  this.cpu = boxRange(optionalArgs.cpu);
+  this.ram = boxRange(optionalArgs.ram);
+  this.preemptible = getBoolean('preemptible', optionalArgs.preemptible);
+
+  checkExtraKeys(optionalArgs, this);
 }
 
-Machine.prototype.deploy = function(deployment) {
-    deployment.machines.push(this);
+Machine.prototype.deploy = function machineDeploy(deployment) {
+  deployment.machines.push(this);
 };
 
 // Create a new machine with the same attributes.
-Machine.prototype.clone = function() {
-    // _.clone only creates a shallow copy, so we must clone sshKeys ourselves.
-    var keyClone = _.clone(this.sshKeys);
-    var cloned = _.clone(this);
-    cloned.sshKeys = keyClone;
-    return new Machine(cloned);
+Machine.prototype.clone = function machineClone() {
+  // _.clone only creates a shallow copy, so we must clone sshKeys ourselves.
+  const keyClone = _.clone(this.sshKeys);
+  const cloned = _.clone(this);
+  cloned.sshKeys = keyClone;
+  return new Machine(cloned);
 };
 
-Machine.prototype.withRole = function(role) {
-    var copy = this.clone();
-    copy.role = role;
-    return copy;
+Machine.prototype.withRole = function machineWithRole(role) {
+  const copy = this.clone();
+  copy.role = role;
+  return copy;
 };
 
-Machine.prototype.asWorker = function() {
-    return this.withRole('Worker');
+/**
+ * @returns {Machine} A new machine with role Worker.
+ */
+Machine.prototype.asWorker = function machineAsWorker() {
+  return this.withRole('Worker');
 };
 
-Machine.prototype.asMaster = function() {
-    return this.withRole('Master');
+/**
+ * @returns {Machine} A new machine with role Master.
+ */
+Machine.prototype.asMaster = function machineAsMaster() {
+  return this.withRole('Master');
 };
 
 // Create n new machines with the same attributes.
-Machine.prototype.replicate = function(n) {
-    var i;
-    var res = [];
-    for (i = 0 ; i < n ; i++) {
-        res.push(this.clone());
-    }
-    return res;
+Machine.prototype.replicate = function machineReplicate(n) {
+  let i;
+  const res = [];
+  for (i = 0; i < n; i += 1) {
+    res.push(this.clone());
+  }
+  return res;
 };
 
+Machine.prototype.hash = function machineHash() {
+  return stringify({
+    provider: this.provider,
+    role: this.role,
+    region: this.region,
+    size: this.size,
+    floatingIp: this.floatingIp,
+    diskSize: this.diskSize,
+    cpu: this.cpu,
+    ram: this.ram,
+    preemptible: this.preemptible,
+  });
+};
+
+/**
+ * Creates a Docker Image.
+ *
+ * If two images with the same name but different Dockerfiles are referenced, an
+ * error will be thrown.
+ *
+ * @constructor
+ *
+ * @example <caption>Create an image that uses the nginx image stored on
+ * Docker Hub.</caption>
+ * const image = new Image('nginx');
+ *
+ * @example <caption>Create an image that uses the etcd image stored at
+ * quay.io.</caption>
+ * const image = new Image('quay.io/coreos/etcd');
+ *
+ * @example <caption>Create an Image named my-image-name that's built on top of
+ * the nginx image, and additionally includes the Git repository at
+ * github.com/my/web/repo cloned into /web_root.</caption>
+ * const image = new Image('my-image-name',
+ *   'FROM nginx\n' +
+ *   'RUN cd /web_root && git clone github.com/my/web_repo');
+ *
+ * @example <caption>Create an image named my-inage-name that's built using a
+ * Dockerfile saved locally at 'Dockerfile'.</caption>
+ * const container = new Image('my-image-name', fs.readFileSync('./Dockerfile'));
+ *
+ * @param {string} name - The name to use for the Docker image, or if no
+ *   Dockerfile is specified, the repository to get the image from. The repository
+ *   can be a full URL (e.g., quay.io/coreos/etcd) or the name of an image in
+ *   Docker Hub (e.g., nginx or nginx:1.13.3).
+ * @param {string} [dockerfile] - The string contents of the Dockerfile that
+ *   constructs the Image.
+ */
 function Image(name, dockerfile) {
-    this.name = name;
-    this.dockerfile = dockerfile;
+  this.name = name;
+  this.dockerfile = dockerfile;
 }
 
-Image.prototype.clone = function() {
-    return new Image(this.name, this.dockerfile);
-}
+Image.prototype.clone = function imageClone() {
+  return new Image(this.name, this.dockerfile);
+};
 
-function Container(image, command) {
-    // refID is used to distinguish deployments with multiple references to the
-    // same container, and deployments with multiple containers with the exact
-    // same attributes.
-    this._refID = uniqueID();
+/**
+ * Creates a new Container, which represents a container to be deployed.
+ *
+ * If a Container uses a custom image (e.g., the image is created by reading
+ * in a local Dockerfile), Quilt tracks the Dockerfile that was used to create
+ * that image.  If the Dockerfile is changed and the blueprint is re-run,
+ * the image will be re-built and all containers that use the image will be
+ * re-started with the new image.
+ *
+ * @constructor
+ * @implements {Connectable}
+ *
+ * @example <caption>Create a Container with hostname myApp that uses the nginx
+ * image on Docker Hub, and that includes a file located at /etc/myconf with
+ * contents foo.</caption>
+ * const container = new Container(
+ *   'myApp', 'nginx', {filepathToContent: {'/etc/myconf': 'foo'}});
+ *
+ * @param {string} hostnamePrefix - The network hostname of the container.
+ * @param {Image|string} image - An {@link Image} that the container should
+ *   boot, or a string with the name of a Docker image (that exists in
+ *   Docker Hub) that the container should boot.
+ * @param {Object} [optionalArgs] - Additional, named, optional arguments.
+ * @param {string} [optionalArgs.command] - The command to use when starting
+ *   the container.
+ * @param {Object.<string, string>} [optionalArgs.env] - Environment variables
+ *   to set in the booted container.  The key is the name of the environment
+ *   variable.
+ * @param {Object.<string, string>} [optionalArgs.filepathToContent] - Text
+ *   files to be installed on the container before it starts.  The key is
+ *   the path on the container where the text file should be installed, and
+ *   the value is the contents of the text file. If the file content specified
+ *   by this argument changes and the blueprint is re-run, Quilt will re-start
+ *   the container using the new files.  Files are installed with permissions
+ *   0644 and parent directories are automatically created.
+ */
+function Container(hostnamePrefix, image, optionalArgs = {}) {
+  // refID is used to distinguish deployments with multiple references to the
+  // same container, and deployments with multiple containers with the exact
+  // same attributes.
+  this._refID = uniqueID();
 
-    this.image = image;
-    if (typeof image === 'string') {
-        this.image = new Image(image);
-    }
+  this.image = image;
+  if (typeof image === 'string') {
+    this.image = new Image(image);
+  }
+  if (!(this.image instanceof Image)) {
+    throw new Error('image must be an Image or string (was ' +
+            `${stringify(image)})`);
+  }
 
-    if (this.image.constructor !== Image) {
-        throw new Error('bad image type');
-    }
+  this.hostnamePrefix = getString('hostnamePrefix', hostnamePrefix);
+  this.hostname = uniqueHostname(this.hostnamePrefix);
+  this.command = getStringArray('command', optionalArgs.command);
+  this.env = getStringMap('env', optionalArgs.env);
+  this.filepathToContent = getStringMap('filepathToContent',
+    optionalArgs.filepathToContent);
 
-    this.command = command || [];
-    this.env = {};
-    this.filepathToContent = {};
+  // Don't allow callers to modify the arguments by reference.
+  this.command = _.clone(this.command);
+  this.env = _.clone(this.env);
+  this.filepathToContent = _.clone(this.filepathToContent);
+  this.image = this.image.clone();
+
+  checkExtraKeys(optionalArgs, this);
+
+  // When generating the Quilt deployment JSON object, these placements must
+  // be converted using Container.getPlacementsWithID.
+  this.placements = [];
+
+  this.allowedInboundConnections = [];
+  this.outgoingPublic = [];
+  this.incomingPublic = [];
 }
 
 // Create a new Container with the same attributes.
-Container.prototype.clone = function() {
-    var cloned = new Container(this.image.clone(), _.clone(this.command));
-    cloned.env = _.clone(this.env);
-    cloned.filepathToContent = _.clone(this.filepathToContent);
-    return cloned;
+Container.prototype.clone = function containerClone() {
+  return new Container(this.hostnamePrefix, this.image, this);
 };
 
 // Create n new Containers with the same attributes.
-Container.prototype.replicate = function(n) {
-    var i;
-    var res = [];
-    for (i = 0 ; i < n ; i++) {
-        res.push(this.clone());
+Container.prototype.replicate = function containerReplicate(n) {
+  let i;
+  const res = [];
+  for (i = 0; i < n; i += 1) {
+    res.push(this.clone());
+  }
+  return res;
+};
+
+Container.prototype.setEnv = function containerSetEnv(key, val) {
+  this.env[key] = val;
+};
+
+Container.prototype.withEnv = function containerWithEnv(env) {
+  const cloned = this.clone();
+  cloned.env = env;
+  return cloned;
+};
+
+/**
+ * Creates a new container that replaces the mapping of filepaths to filecontent
+ * with the given mapping.
+ *
+ * @example <caption>Create a container with hostname haproxy and using an
+ * image named haproxyImage that has a file at path /etc/myconf containing the
+ * text foo.</caption>
+ * const c = new Container('haproxy', haproxyImage).withFiles({
+ *   '/etc/myconf': 'foo'
+ * });
+ *
+ * @param {Object.<string, string>} fileMap - Text files to be installed on
+ *   the container before it starts.  Uses the same format as the
+ *   filepathToContent argument to the {@link Container} constructor.
+ * @returns {Container} A new container that is identical to this one, except
+ *   that filepathToContent is set to the given mappng.
+ */
+Container.prototype.withFiles = function containerWithFiles(fileMap) {
+  const cloned = this.clone();
+  cloned.filepathToContent = fileMap;
+  return cloned;
+};
+
+/**
+ * @returns {string} The container's hostname.
+ */
+Container.prototype.getHostname = function containerGetHostname() {
+  return `${this.hostname}.q`;
+};
+
+Container.prototype.hash = function containerHash() {
+  return stringify({
+    image: this.image,
+    command: this.command,
+    env: this.env,
+    filepathToContent: this.filepathToContent,
+    hostname: this.hostname,
+  });
+};
+
+Container.prototype.placeOn = function containerPlaceOn(machineAttrs) {
+  this.placements.push({
+    exclusive: false,
+    provider: getString('provider', machineAttrs.provider),
+    size: getString('size', machineAttrs.size),
+    region: getString('region', machineAttrs.region),
+    floatingIp: getString('floatingIp', machineAttrs.floatingIp),
+  });
+};
+
+/**
+ * Set the targetContainer of the placement rules to be this container. This
+ * cannot be done when `placeOn` is called because the container ID is not
+ * determined until after all user code has executed.
+ * @private
+ *
+ * @returns {Object} The placements in the form required by the deployment
+ *   engine.
+ */
+Container.prototype.getPlacementsWithID =
+function containerGetPlacementsWithID() {
+  return this.placements.map((plcm) => {
+    plcm.targetContainerID = this.id; // eslint-disable-line no-param-reassign
+    return plcm;
+  });
+};
+
+Container.prototype.allowFrom =
+function containerAllowFrom(srcArg, portRange) {
+  if (srcArg === publicInternet) {
+    this.allowFromPublic(portRange);
+    return;
+  }
+
+  let src;
+  try {
+    src = boxContainers(srcArg);
+  } catch (err) {
+    throw new Error('Containers can only connect to other containers. ' +
+            'Check that you\'re allowing connections from a container or ' +
+            'list of containers, and not from a LoadBalancer or other object.');
+  }
+
+  src.forEach((c) => {
+    this.allowedInboundConnections.push(
+      new Connection(c, boxRange(portRange)));
+  });
+};
+
+Container.prototype.allowOutboundPublic =
+function containerAllowOutboundPublic(r) {
+  const range = boxRange(r);
+  if (range.min !== range.max) {
+    throw new Error('public internet can only connect to single ports ' +
+            'and not to port ranges');
+  }
+  this.outgoingPublic.push(range);
+};
+
+Container.prototype.allowFromPublic = function containerAllowFromPublic(r) {
+  const range = boxRange(r);
+  if (range.min !== range.max) {
+    throw new Error('public internet can only connect to single ports ' +
+            'and not to port ranges');
+  }
+  this.incomingPublic.push(range);
+};
+
+Container.prototype.deploy = function containerDeploy(deployment) {
+  deployment.containers.add(this);
+};
+
+Container.prototype.getQuiltConnections =
+function containerGetQuiltConnections() {
+  const connections = [];
+
+  this.allowedInboundConnections.forEach((conn) => {
+    connections.push({
+      from: conn.from.hostname,
+      to: this.hostname,
+      minPort: conn.minPort,
+      maxPort: conn.maxPort,
+    });
+  });
+
+  this.outgoingPublic.forEach((rng) => {
+    connections.push({
+      from: this.hostname,
+      to: publicInternetLabel,
+      minPort: rng.min,
+      maxPort: rng.max,
+    });
+  });
+
+  this.incomingPublic.forEach((rng) => {
+    connections.push({
+      from: publicInternetLabel,
+      to: this.hostname,
+      minPort: rng.min,
+      maxPort: rng.max,
+    });
+  });
+
+  return connections;
+};
+
+Container.prototype.toQuiltRepresentation =
+function containerToQuiltRepresentation() {
+  return {
+    id: this.id,
+    image: this.image,
+    command: this.command,
+    env: this.env,
+    filepathToContent: this.filepathToContent,
+    hostname: this.hostname,
+  };
+};
+
+/**
+ * Attempts to convert `objects` into an array of objects that
+ * define allowFrom.
+ * If `objects` is an Array, it asserts that each element is connectable. If
+ * it's just a single object, boxConnectable asserts that it is connectable,
+ * and if so, returns it as a single-element Array.
+ * @private
+ *
+ * @param {Connectable|Connectable[]} objects - The Connectables to be boxed.
+ * @returns {Connectable[]} The boxed Connectables.
+ */
+function boxConnectable(objects) {
+  if (isConnectable(objects)) {
+    return [objects];
+  }
+
+  if (!Array.isArray(objects)) {
+    throw new Error('not an array of connectable objects (was ' +
+            `${stringify(objects)})`);
+  }
+  objects.forEach((x, i) => {
+    if (!isConnectable(x)) {
+      throw new Error(
+        `item at index ${i} (${stringify(x)}) cannot be connected to`);
     }
-    return res;
-};
-
-Container.prototype.setEnv = function(key, val) {
-    this.env[key] = val;
-};
-
-Container.prototype.withEnv = function(env) {
-    var cloned = this.clone();
-    cloned.env = env;
-    return cloned;
-};
-
-Container.prototype.withFiles = function(fileMap) {
-    var cloned = this.clone();
-    cloned.filepathToContent = fileMap;
-    return cloned;
-};
-
-Container.prototype.setHostname = function(h) {
-    this.hostname = h;
-};
-
-Container.prototype.getHostname = function() {
-    if (this.hostname === undefined) {
-        throw new Error('no hostname');
-    }
-    return this.hostname + '.q';
-};
-
-var enough = { form: 'enough' };
-var between = invariantType('between');
-var neighbor = invariantType('reachDirect');
-var reachableACL = invariantType('reachACL');
-var reachable = invariantType('reach');
-
-function Assertion(invariant, desired) {
-    this.form = invariant.form;
-    this.nodes = invariant.nodes;
-    this.target = desired;
+  });
+  return objects;
 }
 
-function invariantType(form) {
-    return function() {
-        // Convert the arguments object into a real array. We can't simply use
-        // Array.from because it isn't defined in Otto.
-        var nodes = [];
-        var i;
-        for (i = 0 ; i < arguments.length ; i++) {
-            nodes.push(arguments[i]);
-        }
 
-        return {
-            form: form,
-            nodes: nodes
-        };
-    };
+/**
+ * Interface for classes that can allow inbound traffic.
+ *
+ *  @interface
+ */
+// Connectable is never used because it's defining an interface for creating
+// JsDoc.
+// eslint-disable-next-line no-unused-vars
+class Connectable {
+  /**
+   * Allows traffic from src on port
+   *
+   * @param {Container} src - The container that can initiate connections.
+   * @param {int|Port|PortRange} port - The ports to allow traffic on.
+   * @returns {void}
+   */
+  allowFrom(src, port) { // eslint-disable-line
+    throw new Error('not implemented');
+  }
 }
 
-function LabelRule(exclusive, otherService) {
-    this.exclusive = exclusive;
-    this.otherLabel = otherService.name;
+/**
+ * Returns whether x can allow inbound connections.
+ * @private
+ *
+ * @param {object} x - The object to check
+ * @returns {boolean} Whether x can be connected to
+ */
+function isConnectable(x) {
+  return typeof (x.allowFrom) === 'function';
 }
 
 function MachineRule(exclusive, optionalArgs) {
@@ -636,49 +1077,92 @@ function MachineRule(exclusive, optionalArgs) {
     }
 }
 
+/**
+ * allow is a utility function to allow calling `allowFrom` on groups of
+ * containers.
+ *
+ * @param {Container|publicInternet} src - The containers that can
+ *   initiate a connection.
+ * @param {Connectable[]} dst - The objects that traffic can be sent to.
+ *   Examples of connectable objects are Containers, LoadBalancers, publicInternet,
+ *   and user-defined objects that implement allowFrom.
+ * @param {int|Port|PortRange} port - The ports that traffic is allowed on.
+ * @returns {void}
+ */
+function allow(src, dst, port) {
+  boxConnectable(dst).forEach((c) => {
+    c.allowFrom(src, port);
+  });
+
+/**
+ * Creates a Connection.
+ * @constructor
+ *
+ * @param {string} from - The host from which connections are allowed.
+ * @param {PortRange} ports - The port numbers which are allowed.
+ */
 function Connection(from, ports) {
-    this.minPort = ports.min;
-    this.maxPort = ports.max;
-    this.from = from;
+  this.minPort = ports.min;
+  this.maxPort = ports.max;
+  this.from = from;
 }
 
+/**
+ * Creates a Range object.
+ * @constructor
+ *
+ * @param {integer} min - The minimum of the range (inclusive).
+ * @param {integer} max - The maximum of the range (inclusive).
+ */
 function Range(min, max) {
-    this.min = min;
-    this.max = max;
+  this.min = min;
+  this.max = max;
 }
 
+const PortRange = Range;
+
+/**
+ * Creates a Port object.
+ * @constructor
+ *
+ * @param {integer} p - The port number.
+ */
 function Port(p) {
-    return new PortRange(p, p);
+  return new PortRange(p, p);
 }
 
-var PortRange = Range;
-
+/**
+ * @returns {Deployment} The global deployment object.
+ */
 function getDeployment() {
-    return global._quiltDeployment;
+  return global._quiltDeployment;
 }
 
-// Reset global unique counters. Used only for unit testing.
+/**
+ * Resets global unique counters. Used only for unit testing.
+ * @private
+ *
+ * @returns {void}
+ */
 function resetGlobals() {
-    uniqueIDCounter = 0;
-    labelNameCount = {};
+  uniqueIDCounter = 0;
+  hostnameCount = {};
 }
 
 module.exports = {
-    Assertion,
-    Container,
-    Deployment,
-    Image,
-    LabelRule,
-    Machine,
-    MachineRule,
-    Port,
-    PortRange,
-    Range,
-    Service,
-    createDeployment,
-    getDeployment,
-    githubKeys,
-    publicInternet,
-    enough,
-    resetGlobals,
+  Container,
+  Deployment,
+  Image,
+  Machine,
+  Port,
+  PortRange,
+  Range,
+  LoadBalancer,
+  allow,
+  createDeployment,
+  getDeployment,
+  githubKeys,
+  publicInternet,
+  resetGlobals,
+  baseInfrastructure,
 };

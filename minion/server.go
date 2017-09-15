@@ -1,16 +1,14 @@
 package minion
 
 import (
-	"net"
 	"sort"
 	"strings"
-	"time"
 
+	"github.com/quilt/quilt/connection"
 	"github.com/quilt/quilt/db"
 	"github.com/quilt/quilt/minion/pb"
 
 	"golang.org/x/net/context"
-	"google.golang.org/grpc"
 
 	log "github.com/Sirupsen/logrus"
 )
@@ -19,22 +17,9 @@ type server struct {
 	db.Conn
 }
 
-func minionServerRun(conn db.Conn) {
-	var sock net.Listener
+func minionServerRun(conn db.Conn, creds connection.Credentials) {
+	sock, s := connection.Server("tcp", ":9999", creds.ServerOpts())
 	server := server{conn}
-	for {
-		var err error
-		sock, err = net.Listen("tcp", ":9999")
-		if err != nil {
-			log.WithError(err).Error("Failed to open socket.")
-		} else {
-			break
-		}
-
-		time.Sleep(30 * time.Second)
-	}
-
-	s := grpc.NewServer()
 	pb.RegisterMinionServer(s, server)
 	s.Serve(sock)
 }
@@ -43,6 +28,8 @@ func (s server) GetMinionConfig(cts context.Context,
 	_ *pb.Request) (*pb.MinionConfig, error) {
 
 	var cfg pb.MinionConfig
+
+	c.Inc("GetMinionConfig")
 
 	m := s.MinionSelf()
 	cfg.Role = db.RoleToPB(m.Role)
@@ -65,9 +52,9 @@ func (s server) GetMinionConfig(cts context.Context,
 
 func (s server) SetMinionConfig(ctx context.Context,
 	msg *pb.MinionConfig) (*pb.Reply, error) {
-	go s.Txn(db.EtcdTable,
-		db.MinionTable).Run(func(view db.Database) error {
 
+	c.Inc("SetMinionConfig")
+	go s.Txn(db.EtcdTable, db.MinionTable).Run(func(view db.Database) error {
 		minion := view.MinionSelf()
 		minion.PrivateIP = msg.PrivateIP
 		minion.Blueprint = msg.Blueprint

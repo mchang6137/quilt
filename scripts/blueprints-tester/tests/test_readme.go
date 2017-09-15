@@ -13,9 +13,16 @@ import (
 )
 
 const (
-	blockStart     = "```javascript\n"
-	blockEnd       = "```\n"
-	commentPattern = "^\\[//\\]: # \\((.*)\\)\\W*$"
+	blockStart = "```javascript\n"
+	bashStart  = "```bash\n"
+	blockEnd   = "```\n"
+	// Matches lines like `[//]: # (b1)`.
+	blockIDPattern = "^\\[//\\]: # \\((b\\d+)\\)\\W*$"
+	// Matches lines like `<!-- (<code>) -->`
+	hiddenCodePattern = "<!--\\s*(.*)\\s*-->\\W*$"
+
+	// workDir is the directory blueprints are placed during testing.
+	workDir = "/tmp/quilt-blueprint-test"
 )
 
 var errUnbalanced = errors.New("unbalanced code blocks")
@@ -25,22 +32,28 @@ type readmeParser struct {
 	// Map block ID to code block.
 	codeBlocks map[string]string
 	recording  bool
+	ignoring   bool
 }
 
 func (parser *readmeParser) parse(line string) error {
 	isStart := line == blockStart
 	isEnd := line == blockEnd
-	reComment := regexp.MustCompile(commentPattern)
-	match := reComment.FindStringSubmatch(line)
-	isComment := len(match) > 0
+	isBash := line == bashStart
 
-	if (isStart && parser.recording) || (isEnd && !parser.recording) {
+	hiddenCodeMatch, isHidden := getMatch(hiddenCodePattern, line)
+	blockIDMatch, isBlockID := getMatch(blockIDPattern, line)
+
+	if (isStart && parser.recording) ||
+		(isEnd && !parser.ignoring && !parser.recording) {
 		return errUnbalanced
 	}
 
 	switch {
-	case isComment:
-		parser.currentBlock = match[1]
+	case isBlockID:
+		parser.currentBlock = blockIDMatch
+	case isHidden:
+		line = hiddenCodeMatch + "\n"
+		break
 	case isStart:
 		parser.recording = true
 
@@ -51,12 +64,15 @@ func (parser *readmeParser) parse(line string) error {
 		if _, ok := parser.codeBlocks[parser.currentBlock]; !ok {
 			parser.codeBlocks[parser.currentBlock] = ""
 		}
+	case isBash:
+		parser.ignoring = true
 	case isEnd:
 		parser.recording = false
+		parser.ignoring = false
 		parser.currentBlock = ""
 	}
 
-	if parser.recording && !isStart {
+	if (parser.recording && !isStart) || isHidden {
 		parser.codeBlocks[parser.currentBlock] += line
 	}
 
@@ -73,9 +89,7 @@ func (parser readmeParser) blocks() (map[string]string, error) {
 var dependencies = `{
   "dependencies": {
     "@quilt/quilt": "quilt/quilt",
-    "@quilt/nodejs": "quilt/nodejs",
-    "@quilt/mongo": "quilt/mongo",
-    "@quilt/haproxy": "quilt/haproxy"
+    "@quilt/redis": "quilt/redis"
   }
 }`
 
@@ -124,4 +138,13 @@ func TestReadme() error {
 		}
 	}
 	return nil
+}
+
+func getMatch(pattern, line string) (string, bool) {
+	re := regexp.MustCompile(pattern)
+	match := re.FindStringSubmatch(line)
+	if len(match) > 0 {
+		return match[1], true
+	}
+	return "", false
 }

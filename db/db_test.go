@@ -1,165 +1,14 @@
 package db
 
 import (
-	"fmt"
 	"math/rand"
-	"reflect"
 	"sort"
 	"testing"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
+	"github.com/quilt/quilt/minion/pb"
 	"github.com/stretchr/testify/assert"
 )
-
-func TestMachine(t *testing.T) {
-	conn := New()
-
-	var m Machine
-	err := conn.Txn(AllTables...).Run(func(db Database) error {
-		m = db.InsertMachine()
-		return nil
-	})
-	if err != nil {
-		t.FailNow()
-	}
-
-	if m.ID != 1 || m.Role != None || m.CloudID != "" || m.PublicIP != "" ||
-		m.PrivateIP != "" {
-		t.Errorf("Invalid Machine: %s", spew.Sdump(m))
-		return
-	}
-
-	old := m
-
-	m.Role = Worker
-	m.CloudID = "something"
-	m.PublicIP = "1.2.3.4"
-	m.PrivateIP = "5.6.7.8"
-
-	err = conn.Txn(AllTables...).Run(func(db Database) error {
-		if err := SelectMachineCheck(db, nil, []Machine{old}); err != nil {
-			return err
-		}
-
-		db.Commit(m)
-
-		if err := SelectMachineCheck(db, nil, []Machine{m}); err != nil {
-			return err
-		}
-
-		db.Remove(m)
-
-		if err := SelectMachineCheck(db, nil, []Machine{}); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		t.Error(err.Error())
-		return
-	}
-}
-
-func TestMachineSelect(t *testing.T) {
-	conn := New()
-	regions := []string{"here", "there", "anywhere", "everywhere"}
-
-	var machines []Machine
-	conn.Txn(AllTables...).Run(func(db Database) error {
-		for i := 0; i < 4; i++ {
-			m := db.InsertMachine()
-			m.Region = regions[i]
-			db.Commit(m)
-			machines = append(machines, m)
-		}
-		return nil
-	})
-
-	err := conn.Txn(AllTables...).Run(func(db Database) error {
-		err := SelectMachineCheck(db, func(m Machine) bool {
-			return m.Region == "there"
-		}, []Machine{machines[1]})
-		if err != nil {
-			return err
-		}
-
-		err = SelectMachineCheck(db, func(m Machine) bool {
-			return m.Region != "there"
-		}, []Machine{machines[0], machines[2], machines[3]})
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		t.Error(err.Error())
-		return
-	}
-}
-
-func TestMachineString(t *testing.T) {
-	m := Machine{}
-
-	got := m.String()
-	exp := "Machine-0{  }"
-	if got != exp {
-		t.Errorf("\nGot: %s\nExp: %s", got, exp)
-	}
-
-	m = Machine{
-		ID:        1,
-		CloudID:   "CloudID1234",
-		Provider:  "Amazon",
-		Region:    "us-west-1",
-		Size:      "m4.large",
-		PublicIP:  "1.2.3.4",
-		PrivateIP: "5.6.7.8",
-		DiskSize:  56,
-		Connected: true,
-	}
-	got = m.String()
-	exp = "Machine-1{Amazon us-west-1 m4.large, CloudID1234, PublicIP=1.2.3.4," +
-		" PrivateIP=5.6.7.8, Disk=56GB, Connected}"
-	if got != exp {
-		t.Errorf("\nGot: %s\nExp: %s", got, exp)
-	}
-}
-
-func TestContainerString(t *testing.T) {
-	c := Container{}
-	got := c.String()
-	exp := "Container-0{run }"
-	assert.Equal(t, got, exp)
-
-	fakeMap := make(map[string]string)
-	fakeMap["test"] = "tester"
-	fakeTime := time.Now()
-	fakeTimeString := fakeTime.String()
-
-	c = Container{
-		ID:         1,
-		IP:         "1.2.3.4",
-		Minion:     "Test",
-		EndpointID: "TestEndpoint",
-		StitchID:   "1",
-		DockerID:   "DockerID",
-		Image:      "test/test",
-		Status:     "testing",
-		Hostname:   "hostname",
-		Command:    []string{"run", "/bin/sh"},
-		Labels:     []string{"label1"},
-		Env:        fakeMap,
-		Created:    fakeTime,
-	}
-
-	exp = "Container-1{run test/test run /bin/sh, DockerID: DockerID, " +
-		"Minion: Test, StitchID: 1, IP: 1.2.3.4, Hostname: hostname, " +
-		"Labels: [label1], Env: map[test:tester], Status: testing, " +
-		"Created: " + fakeTimeString + "}"
-
-	assert.Equal(t, exp, c.String())
-}
 
 func TestTxnBasic(t *testing.T) {
 	conn := New()
@@ -197,14 +46,13 @@ func TestAllTablesNoPanic(t *testing.T) {
 	conn := New()
 	conn.Txn(AllTables...).Run(func(view Database) error {
 		view.InsertEtcd()
-		view.InsertLabel()
+		view.InsertLoadBalancer()
 		view.InsertMinion()
 		view.InsertMachine()
-		view.InsertCluster()
+		view.InsertBlueprint()
 		view.InsertPlacement()
 		view.InsertContainer()
 		view.InsertConnection()
-		view.InsertACL()
 
 		return nil
 	})
@@ -218,10 +66,10 @@ func TestTxnNoPanic(t *testing.T) {
 		}
 	}()
 
-	tr := New().Txn(MachineTable, ClusterTable)
+	tr := New().Txn(MachineTable, BlueprintTable)
 	tr.Run(func(view Database) error {
 		view.InsertMachine()
-		view.InsertCluster()
+		view.InsertBlueprint()
 
 		return nil
 	})
@@ -235,7 +83,7 @@ func TestTxnPanic(t *testing.T) {
 		}
 	}()
 
-	tr := New().Txn(MachineTable, ClusterTable)
+	tr := New().Txn(MachineTable, BlueprintTable)
 	tr.Run(func(view Database) error {
 		view.InsertEtcd()
 
@@ -407,8 +255,8 @@ func TestTrigger(t *testing.T) {
 
 	mt := conn.Trigger(MachineTable)
 	mt2 := conn.Trigger(MachineTable)
-	ct := conn.Trigger(ClusterTable)
-	ct2 := conn.Trigger(ClusterTable)
+	ct := conn.Trigger(BlueprintTable)
+	ct2 := conn.Trigger(BlueprintTable)
 
 	triggerNoRecv(t, mt)
 	triggerNoRecv(t, mt2)
@@ -499,18 +347,6 @@ func triggerNoRecv(t *testing.T, trig Trigger) {
 	}
 }
 
-func SelectMachineCheck(db Database, do func(Machine) bool, expected []Machine) error {
-	query := db.SelectFromMachine(do)
-	sort.Sort(mSort(expected))
-	sort.Sort(mSort(query))
-	if !reflect.DeepEqual(expected, query) {
-		return fmt.Errorf("unexpected query result: %s\nExpected %s",
-			spew.Sdump(query), spew.Sdump(expected))
-	}
-
-	return nil
-}
-
 type prefixedString struct {
 	prefix string
 	str    string
@@ -581,11 +417,11 @@ func TestSliceHelpers(t *testing.T) {
 	assert.Equal(t, expected, containers)
 	assert.Equal(t, containers[0], ContainerSlice(containers).Get(0))
 
-	labels := []Label{{Label: "b"}, {Label: "a"}}
-	expLabels := []Label{{Label: "a"}, {Label: "b"}}
-	sort.Sort(LabelSlice(labels))
-	assert.Equal(t, expLabels, labels)
-	assert.Equal(t, labels[0], LabelSlice(labels).Get(0))
+	loadBalancers := []LoadBalancer{{Name: "b"}, {Name: "a"}}
+	expLoadBalancers := []LoadBalancer{{Name: "a"}, {Name: "b"}}
+	sort.Sort(LoadBalancerSlice(loadBalancers))
+	assert.Equal(t, expLoadBalancers, loadBalancers)
+	assert.Equal(t, loadBalancers[0], LoadBalancerSlice(loadBalancers).Get(0))
 
 	conns := []Connection{{ID: 2}, {ID: 1}}
 	expConns := []Connection{{ID: 1}, {ID: 2}}
@@ -594,39 +430,51 @@ func TestSliceHelpers(t *testing.T) {
 	assert.Equal(t, conns[0], ConnectionSlice(conns).Get(0))
 }
 
-func TestGetClusterNamespace(t *testing.T) {
-	conn := New()
+func TestRole(t *testing.T) {
+	t.Parallel()
 
-	ns, err := conn.GetClusterNamespace()
-	assert.NotNil(t, err)
-	assert.Exactly(t, ns, "")
+	assert.Equal(t, pb.MinionConfig_NONE, RoleToPB(None))
+	assert.Equal(t, pb.MinionConfig_WORKER, RoleToPB(Worker))
+	assert.Equal(t, pb.MinionConfig_MASTER, RoleToPB(Master))
 
-	conn.Txn(AllTables...).Run(func(view Database) error {
-		clst := view.InsertCluster()
-		clst.Namespace = "test"
-		view.Commit(clst)
-		return nil
-	})
+	assert.Equal(t, Role(None), PBToRole(pb.MinionConfig_NONE))
+	assert.Equal(t, Role(Worker), PBToRole(pb.MinionConfig_WORKER))
+	assert.Equal(t, Role(Master), PBToRole(pb.MinionConfig_MASTER))
 
-	ns, err = conn.GetClusterNamespace()
+	r, err := ParseRole("")
 	assert.NoError(t, err)
-	assert.Exactly(t, ns, "test")
+	assert.Equal(t, Role(None), r)
+
+	r, err = ParseRole("Worker")
+	assert.NoError(t, err)
+	assert.Equal(t, Role(Worker), r)
+
+	r, err = ParseRole("Master")
+	assert.NoError(t, err)
+	assert.Equal(t, Role(Master), r)
+
+	r, err = ParseRole("err")
+	assert.Error(t, err)
+	assert.Equal(t, Role(None), r)
 }
 
-type mSort []Machine
+func TestProvider(t *testing.T) {
+	t.Parallel()
 
-func (machines mSort) sort() {
-	sort.Stable(machines)
+	p, err := ParseProvider("Amazon")
+	assert.NoError(t, err)
+	assert.Equal(t, p, Amazon)
+
+	_, err = ParseProvider("error")
+	assert.Error(t, err)
 }
 
-func (machines mSort) Len() int {
-	return len(machines)
-}
+func TestRowSlice(t *testing.T) {
+	t.Parallel()
 
-func (machines mSort) Swap(i, j int) {
-	machines[i], machines[j] = machines[j], machines[i]
-}
-
-func (machines mSort) Less(i, j int) bool {
-	return machines[i].ID < machines[j].ID
+	rows := rowSlice([]row{Machine{ID: 1}, Machine{ID: 2}})
+	assert.Equal(t, 2, rows.Len())
+	assert.Equal(t, true, rows.Less(0, 1))
+	rows.Swap(0, 1)
+	assert.Equal(t, false, rows.Less(0, 1))
 }

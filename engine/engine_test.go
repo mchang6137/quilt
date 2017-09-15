@@ -1,11 +1,9 @@
 package engine
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/quilt/quilt/db"
-	"github.com/quilt/quilt/join"
 	"github.com/quilt/quilt/stitch"
 	"github.com/stretchr/testify/assert"
 )
@@ -15,7 +13,6 @@ func TestEngine(t *testing.T) {
 
 	stc := stitch.Stitch{
 		Namespace: "namespace",
-		AdminACL:  []string{"1.2.3.4/32"},
 		Machines: []stitch.Machine{
 			{Provider: "Amazon", Size: "m4.large", Role: "Master", ID: "1"},
 			{Provider: "Amazon", Size: "m4.large", Role: "Master", ID: "2"},
@@ -24,10 +21,7 @@ func TestEngine(t *testing.T) {
 			{Provider: "Amazon", Size: "m4.large", Role: "Worker", ID: "5"},
 		},
 	}
-	updateStitch(t, conn, stc)
-	acl, err := selectACL(conn)
-	assert.Nil(t, err)
-	assert.Equal(t, 1, len(acl.Admin))
+	updateStitch(t, conn, stc, "")
 
 	masters, workers := selectMachines(conn)
 	assert.Equal(t, 2, len(masters))
@@ -45,7 +39,7 @@ func TestEngine(t *testing.T) {
 			Role: "Worker", ID: "9"},
 	)
 
-	updateStitch(t, conn, stc)
+	updateStitch(t, conn, stc, "")
 	masters, workers = selectMachines(conn)
 	assert.Equal(t, 4, len(masters))
 	assert.Equal(t, 5, len(workers))
@@ -81,7 +75,7 @@ func TestEngine(t *testing.T) {
 		{Provider: "Amazon", Size: "m4.large", Role: "Master", ID: "1"},
 		{Provider: "Amazon", Size: "m4.large", Role: "Worker", ID: "3"},
 	}
-	updateStitch(t, conn, stc)
+	updateStitch(t, conn, stc, "")
 
 	masters, workers = selectMachines(conn)
 
@@ -97,7 +91,7 @@ func TestEngine(t *testing.T) {
 
 	/* Empty Namespace does nothing. */
 	stc.Namespace = ""
-	updateStitch(t, conn, stc)
+	updateStitch(t, conn, stc, "")
 	masters, workers = selectMachines(conn)
 
 	assert.Equal(t, 1, len(masters))
@@ -115,22 +109,27 @@ func TestEngine(t *testing.T) {
 		Machines: []stitch.Machine{
 			{Provider: "Amazon", Size: "m4.large", Role: "Worker"},
 		},
-	})
+	}, "")
 	masters, workers = selectMachines(conn)
 	assert.Zero(t, len(masters))
 	assert.Zero(t, len(workers))
 
 	// This function checks whether there is a one-to-one mapping for each machine
 	// in `slice` to a provider in `providers`.
-	providersInSlice := func(slice db.MachineSlice, providers db.ProviderSlice) bool {
-		lKey := func(left interface{}) interface{} {
-			return left.(db.Machine).Provider
+	assertProvidersInSlice := func(
+		slice db.MachineSlice, providers []db.ProviderName) {
+		for _, p := range providers {
+			found := false
+			for _, m := range slice {
+				if m.Provider == p {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found)
 		}
-		rKey := func(right interface{}) interface{} {
-			return right.(db.Provider)
-		}
-		_, l, r := join.HashJoin(slice, providers, lKey, rKey)
-		return len(l) == 0 && len(r) == 0
+		// Make sure there are no extra machines.
+		assert.Equal(t, len(slice), len(providers))
 	}
 
 	/* Test mixed providers. */
@@ -141,11 +140,10 @@ func TestEngine(t *testing.T) {
 			{Provider: "Amazon", Size: "m4.large", Role: "Worker", ID: "3"},
 			{Provider: "Google", Size: "g.large", Role: "Worker", ID: "4"},
 		},
-	})
+	}, "")
 	masters, workers = selectMachines(conn)
-	assert.True(t, providersInSlice(masters,
-		db.ProviderSlice{db.Amazon, db.Vagrant}))
-	assert.True(t, providersInSlice(workers, db.ProviderSlice{db.Amazon, db.Google}))
+	assertProvidersInSlice(masters, []db.ProviderName{db.Amazon, db.Vagrant})
+	assertProvidersInSlice(workers, []db.ProviderName{db.Amazon, db.Google})
 
 	/* Test that machines with different providers don't match. */
 	updateStitch(t, conn, stitch.Stitch{
@@ -153,9 +151,61 @@ func TestEngine(t *testing.T) {
 			{Provider: "Amazon", Size: "m4.large", Role: "Master", ID: "1"},
 			{Provider: "Amazon", Size: "m4.large", Role: "Worker", ID: "2"},
 		},
-	})
+	}, "")
 	masters, _ = selectMachines(conn)
-	assert.True(t, providersInSlice(masters, db.ProviderSlice{db.Amazon}))
+	assertProvidersInSlice(masters, []db.ProviderName{db.Amazon})
+}
+
+func TestAdminKey(t *testing.T) {
+	t.Parallel()
+
+	conn := db.New()
+
+	updateStitch(t, conn, stitch.Stitch{
+		Machines: []stitch.Machine{
+			{
+				ID:       "1",
+				Provider: "Amazon",
+				Role:     "Master",
+				SSHKeys:  []string{"app"},
+			},
+			{
+				ID:       "2",
+				Provider: "Amazon",
+				Role:     "Worker",
+				SSHKeys:  []string{"app"},
+			},
+		},
+	}, "admin")
+
+	machines := conn.SelectFromMachine(nil)
+	assert.Len(t, machines, 2)
+	for _, m := range machines {
+		assert.Equal(t, []string{"app", "admin"}, m.SSHKeys)
+	}
+
+	updateStitch(t, conn, stitch.Stitch{
+		Machines: []stitch.Machine{
+			{
+				ID:       "1",
+				Provider: "Amazon",
+				Role:     "Master",
+				SSHKeys:  []string{"app"},
+			},
+			{
+				ID:       "2",
+				Provider: "Amazon",
+				Role:     "Worker",
+				SSHKeys:  []string{"app"},
+			},
+		},
+	}, "")
+
+	machines = conn.SelectFromMachine(nil)
+	assert.Len(t, machines, 2)
+	for _, m := range machines {
+		assert.Equal(t, []string{"app"}, m.SSHKeys)
+	}
 }
 
 func TestSort(t *testing.T) {
@@ -168,7 +218,7 @@ func TestSort(t *testing.T) {
 			{Provider: "Amazon", Size: "m4.large", Role: "Master"},
 			{Provider: "Amazon", Size: "m4.large", Role: "Worker"},
 		},
-	})
+	}, "")
 	conn.Txn(db.AllTables...).Run(func(view db.Database) error {
 		machines := view.SelectFromMachine(func(m db.Machine) bool {
 			return m.Role == db.Master
@@ -196,7 +246,7 @@ func TestSort(t *testing.T) {
 			{Provider: "Amazon", Size: "m4.large", Role: "Master"},
 			{Provider: "Amazon", Size: "m4.large", Role: "Worker"},
 		},
-	})
+	}, "")
 	conn.Txn(db.AllTables...).Run(func(view db.Database) error {
 		machines := view.SelectFromMachine(func(m db.Machine) bool {
 			return m.Role == db.Master
@@ -209,34 +259,6 @@ func TestSort(t *testing.T) {
 
 		return nil
 	})
-}
-
-func TestACLs(t *testing.T) {
-	conn := db.New()
-
-	stc := stitch.Stitch{
-		AdminACL: []string{"1.2.3.4/32", "local"},
-		Machines: []stitch.Machine{
-			{Provider: "Amazon", Role: "Master"},
-			{Provider: "Amazon", Role: "worker"},
-		},
-	}
-
-	myIP = func() (string, error) {
-		return "5.6.7.8", nil
-	}
-	updateStitch(t, conn, stc)
-	acl, err := selectACL(conn)
-	assert.Nil(t, err)
-	assert.Equal(t, []string{"1.2.3.4/32", "5.6.7.8/32"}, acl.Admin)
-
-	myIP = func() (string, error) {
-		return "", errors.New("")
-	}
-	updateStitch(t, conn, stc)
-	acl, err = selectACL(conn)
-	assert.Nil(t, err)
-	assert.Equal(t, []string{"1.2.3.4/32"}, acl.Admin)
 }
 
 func selectMachines(conn db.Conn) (masters, workers []db.Machine) {
@@ -252,23 +274,18 @@ func selectMachines(conn db.Conn) (masters, workers []db.Machine) {
 	return
 }
 
-func selectACL(conn db.Conn) (acl db.ACL, err error) {
-	err = conn.Txn(db.AllTables...).Run(func(view db.Database) error {
-		acl, err = view.GetACL()
-		return err
-	})
-	return
-}
-
-func updateStitch(t *testing.T, conn db.Conn, stitch stitch.Stitch) {
+func updateStitch(t *testing.T, conn db.Conn, stitch stitch.Stitch, adminKey string) {
 	conn.Txn(db.AllTables...).Run(func(view db.Database) error {
-		cluster, err := view.GetCluster()
+		blueprint, err := view.GetBlueprint()
 		if err != nil {
-			cluster = view.InsertCluster()
+			blueprint = view.InsertBlueprint()
 		}
-		cluster.Blueprint = stitch.String()
-		view.Commit(cluster)
+		blueprint.Stitch = stitch
+		view.Commit(blueprint)
 		return nil
 	})
-	assert.Nil(t, conn.Txn(db.AllTables...).Run(updateTxn))
+	assert.Nil(t, conn.Txn(db.AllTables...).Run(
+		func(view db.Database) error {
+			return updateTxn(view, adminKey)
+		}))
 }

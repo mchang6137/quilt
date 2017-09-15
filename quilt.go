@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/quilt/quilt/quiltctl"
+	"github.com/quilt/quilt/cli"
 	"github.com/quilt/quilt/util"
 
 	"google.golang.org/grpc/grpclog"
@@ -17,29 +17,32 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
+var quiltCommands = "quilt [OPTIONS] COMMAND"
+
+var quiltExplanation = `An approachable way to deploy to the cloud using Node.js.
+
+To see the help text for a given command:
+quilt COMMAND --help
+
+Commands:
+  counters, daemon, debug-logs, init, inspect, logs, minion, show, run, ssh,
+  stop, version, setup-tls`
+
 func main() {
 	flag.Usage = func() {
-		fmt.Println("Usage: quilt " +
-			"[-log-level=<level> | -l=<level>] [-H=<listen_address>] " +
-			"[log-file=<log_output_file>] " +
-			"[daemon | inspect <stitch> | run <stitch> | minion | " +
-			"stop <namespace> | ps | ssh <id> [command] | " +
-			"logs <container> | debug-logs <id...> | version]")
-		fmt.Println("\nWhen provided a stitch, quilt takes responsibility\n" +
-			"for deploying it as specified.  Alternatively, quilt may be\n" +
-			"instructed to stop all deployments in a given namespace,\n" +
-			"or the default namespace if none is provided.\n")
-		flag.PrintDefaults()
-		fmt.Println("        Valid logger levels are:\n" +
-			"            debug, info, warn, error, fatal or panic.")
+		util.PrintUsageString(quiltCommands, quiltExplanation, nil)
 	}
+	var logLevelInfo = "logging level (debug, info, warn, error, fatal, or panic)"
+	var debugInfo = "turn on debug logging"
 
 	var logOut = flag.String("log-file", "", "log output file (will be overwritten)")
-	var logLevel = flag.String("log-level", "info", "level to set logger to")
-	flag.StringVar(logLevel, "l", "info", "level to set logger to")
+	var logLevel = flag.String("log-level", "info", logLevelInfo)
+	var debugOn = flag.Bool("verbose", false, debugInfo)
+	flag.StringVar(logLevel, "l", "info", logLevelInfo)
+	flag.BoolVar(debugOn, "v", false, debugInfo)
 	flag.Parse()
 
-	level, err := parseLogLevel(*logLevel)
+	level, err := parseLogLevel(*logLevel, *debugOn)
 	if err != nil {
 		fmt.Println(err)
 		usage()
@@ -57,7 +60,7 @@ func main() {
 		log.SetOutput(file)
 	}
 
-	// GRPC spews a lot of useless log messages so we tell to eat its logs, unless
+	// GRPC spews a lot of useless log messages so we discard its logs, unless
 	// we are in debug mode
 	grpclog.SetLogger(l_mod.New(ioutil.Discard, "", 0))
 	if level == log.DebugLevel {
@@ -69,8 +72,8 @@ func main() {
 	}
 
 	subcommand := flag.Arg(0)
-	if quiltctl.HasSubcommand(subcommand) {
-		quiltctl.Run(subcommand, flag.Args()[1:])
+	if cli.HasSubcommand(subcommand) {
+		cli.Run(subcommand, flag.Args()[1:])
 	} else {
 		usage()
 	}
@@ -84,7 +87,11 @@ func usage() {
 // parseLogLevel returns the log.Level type corresponding to the given string
 // (case insensitive).
 // If no such matching string is found, it returns log.InfoLevel (default) and an error.
-func parseLogLevel(logLevel string) (log.Level, error) {
+func parseLogLevel(logLevel string, debug bool) (log.Level, error) {
+	if debug {
+		return log.DebugLevel, nil
+	}
+
 	logLevel = strings.ToLower(logLevel)
 	switch logLevel {
 	case "debug":

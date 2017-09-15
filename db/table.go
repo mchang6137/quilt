@@ -8,8 +8,8 @@ import (
 // TableType represents a table in the database.
 type TableType string
 
-// ClusterTable is the type of the cluster table.
-var ClusterTable = TableType(reflect.TypeOf(Cluster{}).String())
+// BlueprintTable is the type of the blueprint table.
+var BlueprintTable = TableType(reflect.TypeOf(Blueprint{}).String())
 
 // MachineTable is the type of the machine table.
 var MachineTable = TableType(reflect.TypeOf(Machine{}).String())
@@ -23,17 +23,14 @@ var MinionTable = TableType(reflect.TypeOf(Minion{}).String())
 // ConnectionTable is the type of the connection table.
 var ConnectionTable = TableType(reflect.TypeOf(Connection{}).String())
 
-// LabelTable is the type of the label table.
-var LabelTable = TableType(reflect.TypeOf(Label{}).String())
+// LoadBalancerTable is the type of the load balancer table.
+var LoadBalancerTable = TableType(reflect.TypeOf(LoadBalancer{}).String())
 
 // EtcdTable is the type of the etcd table.
 var EtcdTable = TableType(reflect.TypeOf(Etcd{}).String())
 
 // PlacementTable is the type of the placement table.
 var PlacementTable = TableType(reflect.TypeOf(Placement{}).String())
-
-// ACLTable is the type of the ACL table.
-var ACLTable = TableType(reflect.TypeOf(ACL{}).String())
 
 // ImageTable is the type of the image table.
 var ImageTable = TableType(reflect.TypeOf(Image{}).String())
@@ -44,8 +41,8 @@ var HostnameTable = TableType(reflect.TypeOf(Hostname{}).String())
 // AllTables is a slice of all the db TableTypes. It is used primarily for tests,
 // where there is no reason to put lots of thought into which tables a Transaction
 // should use.
-var AllTables = []TableType{ClusterTable, MachineTable, ContainerTable, MinionTable,
-	ConnectionTable, LabelTable, EtcdTable, PlacementTable, ACLTable, ImageTable,
+var AllTables = []TableType{BlueprintTable, MachineTable, ContainerTable, MinionTable,
+	ConnectionTable, LoadBalancerTable, EtcdTable, PlacementTable, ImageTable,
 	HostnameTable}
 
 type table struct {
@@ -75,6 +72,7 @@ func (t *table) alert() {
 
 		select {
 		case trigger.C <- struct{}{}:
+			c.Inc("Trigger")
 		default:
 		}
 	}

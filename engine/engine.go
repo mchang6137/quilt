@@ -1,7 +1,8 @@
 package engine
 
 import (
-	"github.com/quilt/quilt/cluster"
+	"github.com/quilt/quilt/cloud"
+	"github.com/quilt/quilt/counter"
 	"github.com/quilt/quilt/db"
 	"github.com/quilt/quilt/join"
 	"github.com/quilt/quilt/stitch"
@@ -13,53 +14,28 @@ import (
 var myIP = util.MyIP
 var defaultDiskSize = 32
 
-// Run updates the database in response to stitch changes in the cluster table.
-func Run(conn db.Conn) {
-	for range conn.TriggerTick(30, db.ClusterTable, db.MachineTable, db.ACLTable).C {
-		conn.Txn(db.ACLTable, db.ClusterTable,
-			db.MachineTable).Run(updateTxn)
-	}
-}
+var c = counter.New("Engine")
 
-func updateTxn(view db.Database) error {
-	cluster, err := view.GetCluster()
-	if err != nil {
-		return err
-	}
-
-	stitch, err := stitch.FromJSON(cluster.Blueprint)
-	if err != nil {
-		return err
-	}
-
-	cluster.Namespace = stitch.Namespace
-	view.Commit(cluster)
-
-	machineTxn(view, stitch)
-	aclTxn(view, stitch)
-	return nil
-}
-
-func aclTxn(view db.Database, blueprintHandle stitch.Stitch) {
-	aclRow, err := view.GetACL()
-	if err != nil {
-		aclRow = view.InsertACL()
-	}
-
-	aclRow.Admin = resolveACLs(blueprintHandle.AdminACL)
-
-	var applicationPorts []db.PortRange
-	for _, conn := range blueprintHandle.Connections {
-		if conn.From == stitch.PublicInternetLabel {
-			applicationPorts = append(applicationPorts, db.PortRange{
-				MinPort: conn.MinPort,
-				MaxPort: conn.MaxPort,
+// Run updates the database in response to stitch changes in the blueprint table.
+func Run(conn db.Conn, adminKey string) {
+	for range conn.TriggerTick(30, db.BlueprintTable, db.MachineTable).C {
+		conn.Txn(db.BlueprintTable, db.MachineTable).Run(
+			func(view db.Database) error {
+				return updateTxn(view, adminKey)
 			})
-		}
 	}
-	aclRow.ApplicationPorts = applicationPorts
+}
 
-	view.Commit(aclRow)
+func updateTxn(view db.Database, adminKey string) error {
+	c.Inc("Update")
+
+	blueprint, err := view.GetBlueprint()
+	if err != nil {
+		return err
+	}
+
+	machineTxn(view, blueprint.Stitch, adminKey)
+	return nil
 }
 
 // toDBMachine converts machines specified in the Stitch into db.Machines that can
@@ -67,7 +43,9 @@ func aclTxn(view db.Database, blueprintHandle stitch.Stitch) {
 // Specifically, it sets the role of the db.Machine, the size (which may depend
 // on RAM and CPU constraints), and the provider.
 // Additionally, it skips machines with invalid roles, sizes or providers.
-func toDBMachine(machines []stitch.Machine, maxPrice float64) []db.Machine {
+func toDBMachine(machines []stitch.Machine, maxPrice float64,
+	adminKey string) []db.Machine {
+
 	var hasMaster, hasWorker bool
 	var dbMachines []db.Machine
 	for _, stitchm := range machines {
@@ -93,7 +71,7 @@ func toDBMachine(machines []stitch.Machine, maxPrice float64) []db.Machine {
 		m.Preemptible = stitchm.Preemptible
 
 		if m.Size == "" {
-			m.Size = cluster.ChooseSize(p, stitchm.RAM, stitchm.CPU,
+			m.Size = cloud.ChooseSize(p, stitchm.RAM, stitchm.CPU,
 				maxPrice)
 			if m.Size == "" {
 				log.Errorf("No valid size for %v, skipping.", m)
@@ -106,11 +84,15 @@ func toDBMachine(machines []stitch.Machine, maxPrice float64) []db.Machine {
 			m.DiskSize = defaultDiskSize
 		}
 
-		m.StitchID = stitchm.ID
 		m.SSHKeys = stitchm.SSHKeys
+		if adminKey != "" {
+			m.SSHKeys = append(m.SSHKeys, adminKey)
+		}
+
+		m.StitchID = stitchm.ID
 		m.Region = stitchm.Region
 		m.FloatingIP = stitchm.FloatingIP
-		dbMachines = append(dbMachines, cluster.DefaultRegion(m))
+		dbMachines = append(dbMachines, cloud.DefaultRegion(m))
 	}
 
 	if hasMaster && !hasWorker {
@@ -124,10 +106,10 @@ func toDBMachine(machines []stitch.Machine, maxPrice float64) []db.Machine {
 	return dbMachines
 }
 
-func machineTxn(view db.Database, stitch stitch.Stitch) {
+func machineTxn(view db.Database, stitch stitch.Stitch, adminKey string) {
 	// XXX: How best to deal with machines that don't specify enough information?
 	maxPrice := stitch.MaxPrice
-	stitchMachines := toDBMachine(stitch.Machines, maxPrice)
+	stitchMachines := toDBMachine(stitch.Machines, maxPrice, adminKey)
 
 	dbMachines := view.SelectFromMachine(nil)
 
@@ -191,21 +173,4 @@ func machineTxn(view db.Database, stitch stitch.Stitch) {
 		dbMachine.Preemptible = stitchMachine.Preemptible
 		view.Commit(dbMachine)
 	}
-}
-
-func resolveACLs(acls []string) []string {
-	var result []string
-	for _, acl := range acls {
-		if acl == "local" {
-			ip, err := myIP()
-			if err != nil {
-				log.WithError(err).Warn("Failed to get IP address.")
-				continue
-			}
-			acl = ip + "/32"
-		}
-		result = append(result, acl)
-	}
-
-	return result
 }

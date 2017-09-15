@@ -4,74 +4,47 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strings"
 
-	"github.com/quilt/quilt/stitch"
 	"github.com/quilt/quilt/util"
 )
 
-func getSlug(configPath string) (string, error) {
-	var slug string
-	for i, ch := range configPath {
-		if ch == '.' {
-			slug = configPath[:i]
-			break
-		}
-	}
-	if len(slug) == 0 {
-		return "", fmt.Errorf("could not find proper output file name")
-	}
-
-	return slug, nil
+func stripExtension(configPath string) string {
+	ext := filepath.Ext(configPath)
+	return strings.TrimSuffix(configPath, ext)
 }
 
-func viz(configPath string, blueprint stitch.Stitch, graph stitch.Graph,
-	outputFormat string) {
-	slug, err := getSlug(configPath)
-	if err != nil {
-		panic(err)
-	}
+func viz(configPath string, graph Graph, outputFormat string) {
+	slug := stripExtension(configPath)
 	dot := makeGraphviz(graph)
 	graphviz(outputFormat, slug, dot)
 }
 
-func makeGraphviz(graph stitch.Graph) string {
-	dotfile := "strict digraph {\n"
-
-	for i, av := range graph.Availability {
-		dotfile += subGraph(i, av.Nodes()...)
+func makeGraphviz(graph Graph) string {
+	var nodes []string
+	for node := range graph.Nodes {
+		nodes = append(nodes, fmt.Sprintf("    %q;", node))
 	}
+	sort.Strings(nodes)
 
-	var lines []string
+	var connections []string
 	for _, edge := range graph.GetConnections() {
-		lines = append(lines,
+		connections = append(connections,
 			fmt.Sprintf(
-				"    %s -> %s\n",
+				"    %q -> %q;",
 				edge.From,
 				edge.To,
 			),
 		)
 	}
+	sort.Strings(connections)
 
-	sort.Strings(lines)
-	for _, line := range lines {
-		dotfile += line + "\n"
-	}
-
-	dotfile += "}\n"
-
-	return dotfile
-}
-
-func subGraph(i int, labels ...string) string {
-	subgraph := fmt.Sprintf("    subgraph cluster_%d {\n", i)
-	str := ""
-	sort.Strings(labels)
-	for _, l := range labels {
-		str += l + "; "
-	}
-	subgraph += "        " + str + "\n    }\n"
-	return subgraph
+	return "strict digraph {\n" +
+		strings.Join(nodes, "\n") + "\n" +
+		strings.Join(connections, "\n") + "\n" +
+		"}\n"
 }
 
 // Graphviz generates a specification for the graphviz program that visualizes the

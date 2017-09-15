@@ -7,6 +7,7 @@ import (
 
 	"github.com/quilt/quilt/db"
 	"github.com/quilt/quilt/join"
+	"github.com/quilt/quilt/util"
 
 	log "github.com/Sirupsen/logrus"
 )
@@ -16,7 +17,7 @@ const connectionPath = "/connections"
 func runConnection(conn db.Conn, store Store) {
 	etcdWatch := store.Watch(connectionPath, 1*time.Second)
 	trigg := conn.TriggerTick(60, db.ConnectionTable)
-	for range joinNotifiers(trigg.C, etcdWatch) {
+	for range util.JoinNotifiers(trigg.C, etcdWatch) {
 		if err := runConnectionOnce(conn, store); err != nil {
 			log.WithError(err).Warn("Failed to sync connections with Etcd.")
 		}
@@ -30,12 +31,14 @@ func runConnectionOnce(conn db.Conn, store Store) error {
 	}
 
 	if conn.EtcdLeader() {
+		c.Inc("Run Connection Leader")
 		slice := db.ConnectionSlice(conn.SelectFromConnection(nil))
 		err = writeEtcdSlice(store, connectionPath, etcdStr, slice)
 		if err != nil {
 			return fmt.Errorf("etcd write error: %s", err)
 		}
 	} else {
+		c.Inc("Run Connection Worker")
 		var etcdConns []db.Connection
 		json.Unmarshal([]byte(etcdStr), &etcdConns)
 		conn.Txn(db.ConnectionTable).Run(func(view db.Database) error {

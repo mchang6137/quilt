@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/quilt/quilt/counter"
 	"github.com/quilt/quilt/minion/ipdef"
 	"github.com/quilt/quilt/minion/ovsdb"
 )
@@ -36,14 +37,8 @@ Registers
 
 The psuedocode currently uses three registers:
 
-Reg0 -- Indicates what type of port the packet came from.  1 for a Veth.  2 for a patch
-port. 0 if neither.
-
-Reg1 -- Contains the OpenFlow port number of the veth, or zero if the packet came from
-the gateway.
-
-Reg2 -- Contains the OpenFlow port number of the patch port, or zero if the packet came
-from the gateway.
+Reg0 -- Contains the OpenFlow port number of the patch port if the packet came from a
+veth. Otherwise it contains zero.
 
 Tables
 ------
@@ -52,79 +47,97 @@ Tables
 Table_0 { // Initial Table
 	for each db.Container {
 		if in_port=dbc.VethPort && dl_src=dbc.Mac {
-			reg0 <- 1
-			reg1 <- dbc.VethPort
-			reg2 <- dbc.PatchPort
+			reg0 <- dbc.PatchPort
 			goto Table_1
 		}
 
 		if in_port=dbc.PatchPort {
-			reg0 <- 2
-			reg1 <- dbc.VethPort
-			reg2 <- dbc.PatchPort
-			goto Table_1
+			output:dbc.VethPort
 		}
 	}
 
 	if in_port=LOCAL {
-		goto Table_1
+		goto Table_2
 	}
 }
 
-// Table_1 handles special cases for broadcast packets and the default gateway.  If no
-special cases apply, it outputs the packet.
+// Table_1 handles packets coming from a veth.
 Table_1 {
-	// If the veth sends a broadcast, send it to the gateway and the patch port.
-	if reg0=1 && dl_dst=ff:ff:ff:ff:ff:ff {
-		output:LOCAL,reg2
+	// Send broadcasts to the gateway and patch port.
+	if arp,dl_dst=ff:ff:ff:ff:ff:ff {
+		output:LOCAL,reg0
 	}
 
-	// If the patch port sends a broadcast, send it to the veth.
-	if reg0=2 && dl_dst=ff:ff:ff:ff:ff:ff {
-		output:reg1
+	// Send packets from the veth to the gateway.
+	if dl_dst=gwMac {
+		goto Table_3
 	}
 
+	// Everything else can be handled by OVN.
+	output:reg0
+}
+
+// Table_2 forwards packets coming from the LOCAL port.
+Table_2 {
 	// If the gateway sends a broadcast, send it to all veths.
 	if dl_dst=ff:ff:ff:ff:ff:ff {
 		output:veth{1..n}
 	}
 
-	// If the veth sends a packet to the gateway, forward it.
-	if reg0=1 && dl_dst=gwMac {
+       for each db.Container {
+		// The gateway may send unicast arps to the container.
+                if arp && dl_dst=dbc.mac {
+                        output:veth
+                }
+
+		// Packets originated by the gateway (i.e. DNS) are allowed.
+		if ip && dl_dst=dbc.mac && nw_src=gwIP {
+			output:veth
+		}
+
+		for each toPub {
+			// Response packets have toPub as the source port.
+			[tcp|udp],dl_dst=dbc.mac,ip_dst=dbc.ip,tp_src=toPub,
+				actions=output:veth
+		}
+
+		for each fromPub {
+			// Inbound packets have toPub as the destination port.
+			[tcp|udp],dl_dst=dbc.mac,ip_dst=dbc.ip,tp_dst=fromPub,
+				actions=output:veth
+		}
+        }
+}
+
+
+// Table_3 forwards unicast packets going to LOCAL port, or drops them if they are
+// disallowed.
+Table_3 {
+	// Containers are allowed to send packets destined for the gateway.
+	if ip && nw_dst=gwIP {
 		output:LOCAL
 	}
 
-	// Drop if a port other than a veth attempts to send to the default gateway.
-	if dl_dst=gwMac {
-		drop
+	// Containers are allowed to ARP the gateway.
+	if arp {
+		output:LOCAL
 	}
 
-	// Packets from the gateway don't have the registers set, so use Table_2 to
-	// forward based on dl_dst.
-	if in_port=LOCAL {
-		goto Table_2
-	}
-
-	// Send packets from the veth to the patch port.
-	if reg0=1 {
-		output:reg2
-	}
-
-	// Send packets from the patch port to the veth.
-	if reg0=2 {
-		output:reg1
-	}
-}
-
-// Table_2 attempts to forward packets to a veth based on its destination MAC.
-Table_2 {
-	// Packets coming from the
 	for each db.Container {
-		if nw_dst=dbc.Mac {
-			output:veth
+		for each toPub {
+			// Outbound packets have fromPub as the destination port.
+			[tcp|udp],dl_src=dbc.mac,ip_src=dbc.ip,tp_dst=toPub,
+				actions=output:LOCAL
+		}
+
+		for each fromPub {
+			// Response packets have fromPub as the source port.
+			[tcp|udp],dl_src=dbc.mac,ip_src=dbc.ip,tp_src=fromPub,
+				actions=output:LOCAL
 		}
 	}
 }
+
 */
 
 // A Container that needs OpenFlow rules installed for it.
@@ -132,34 +145,43 @@ type Container struct {
 	Veth  string
 	Patch string
 	Mac   string
+	IP    string
+
+	// Set of ports going to and from the public internet.
+	ToPub   map[int]struct{}
+	FromPub map[int]struct{}
 }
 
 type container struct {
-	veth  int
-	patch int
-	mac   string
+	Container
+
+	vethPort  int
+	patchPort int
 }
+
+var c = counter.New("OpenFlow")
 
 var staticFlows = []string{
 	// Table 0
-	"table=0,priority=1000,in_port=LOCAL,actions=resubmit(,1)",
+	"table=0,priority=1000,in_port=LOCAL,actions=resubmit(,2)",
 
 	// Table 1
-	"table=1,priority=1000,reg0=0x1,dl_dst=ff:ff:ff:ff:ff:ff," +
-		"actions=output:LOCAL,output:NXM_NX_REG2[]",
-	"table=1,priority=900,reg0=0x2,dl_dst=ff:ff:ff:ff:ff:ff," +
-		"actions=output:NXM_NX_REG1[]",
-	fmt.Sprintf("table=1,priority=800,reg0=1,dl_dst=%s,actions=LOCAL",
+	"table=1,priority=1000,arp,dl_dst=ff:ff:ff:ff:ff:ff," +
+		"actions=output:LOCAL,output:NXM_NX_REG0[]",
+	fmt.Sprintf("table=1,priority=900,dl_dst=%s,actions=resubmit(,3)",
 		ipdef.GatewayMac),
-	fmt.Sprintf("table=1,priority=700,dl_dst=%s,actions=drop", ipdef.GatewayMac),
-	"table=1,priority=600,in_port=LOCAL,actions=resubmit(,2)",
-	"table=1,priority=500,reg0=1,actions=output:NXM_NX_REG2[]",
-	"table=1,priority=400,reg0=2,actions=output:NXM_NX_REG1[]",
+	"table=1,priority=800,actions=output:NXM_NX_REG0[]",
+
+	// Table 3
+	fmt.Sprintf("table=3,priority=1000,ip,nw_dst=%s,actions=output:LOCAL",
+		ipdef.GatewayIP),
+	"table=3,priority=900,arp,actions=output:LOCAL",
 }
 
 // ReplaceFlows adds flows associated with the provided containers, and removes all
 // other flows.
 func ReplaceFlows(containers []Container) error {
+	c.Inc("Replace Flows")
 	ofports, err := openflowPorts()
 	if err != nil {
 		return err
@@ -172,6 +194,7 @@ func ReplaceFlows(containers []Container) error {
 	// reports no changes.  The `diff-flows` check should be removed once
 	// `replace-flows` is fixed upstream.
 	if ofctl("diff-flows", flows) != nil {
+		c.Inc("Flows Changed")
 		if err := ofctl("replace-flows", flows); err != nil {
 			return fmt.Errorf("ovs-ofctl: %s", err)
 		}
@@ -183,12 +206,13 @@ func ReplaceFlows(containers []Container) error {
 // AddFlows adds flows associated with the provided containers without touching flows
 // that may already be installed.
 func AddFlows(containers []Container) error {
+	c.Inc("Add Flows")
 	ofports, err := openflowPorts()
 	if err != nil {
 		return err
 	}
 
-	flows := containerFlows(resolveContainers(ofports, containers))
+	flows := allContainerFlows(resolveContainers(ofports, containers))
 	if err := ofctl("add-flows", flows); err != nil {
 		return fmt.Errorf("ovs-ofctl: %s", err)
 	}
@@ -196,19 +220,56 @@ func AddFlows(containers []Container) error {
 	return nil
 }
 
-func containerFlows(containers []container) []string {
+func allContainerFlows(containers []container) []string {
 	var flows []string
 	for _, c := range containers {
-		template := fmt.Sprintf("table=0,priority=1000,in_port=%s%s,"+
-			"actions=load:0x%s->NXM_NX_REG0[],load:0x%x->NXM_NX_REG1[],"+
-			"load:0x%x->NXM_NX_REG2[],resubmit(,1)",
-			"%d", "%s", "%x", c.veth, c.patch)
-		flows = append(flows,
-			fmt.Sprintf(template, c.veth, ",dl_src="+c.mac, 1),
-			fmt.Sprintf(template, c.patch, "", 2),
-			fmt.Sprintf("table=2,priority=1000,dl_dst=%s,actions=output:%d",
-				c.mac, c.veth))
+		flows = append(flows, containerFlows(c)...)
 	}
+	return flows
+}
+
+func containerFlows(c container) []string {
+	flows := []string{
+		// Table 0
+		fmt.Sprintf("table=0,in_port=%d,dl_src=%s,"+
+			"actions=load:0x%x->NXM_NX_REG0[],resubmit(,1)",
+			c.vethPort, c.Mac, c.patchPort),
+		fmt.Sprintf("table=0,in_port=%d,actions=output:%d",
+			c.patchPort, c.vethPort),
+
+		// Table 2
+		fmt.Sprintf("table=2,priority=900,arp,dl_dst=%s,action=output:%d",
+			c.Mac, c.vethPort),
+		fmt.Sprintf("table=2,priority=800,ip,dl_dst=%s,nw_src=%s,"+
+			"action=output:%d", c.Mac, ipdef.GatewayIP, c.vethPort),
+	}
+
+	table2 := "table=2,priority=500,%s,dl_dst=%s,ip_dst=%s,tp_src=%d," +
+		"actions=output:%d"
+	table3 := "table=3,priority=500,%s,dl_src=%s,ip_src=%s,tp_dst=%d," +
+		"actions=output:LOCAL"
+	for to := range c.Container.ToPub {
+		flows = append(flows,
+			fmt.Sprintf(table2, "tcp", c.Mac, c.IP, to, c.vethPort),
+			fmt.Sprintf(table2, "udp", c.Mac, c.IP, to, c.vethPort),
+
+			fmt.Sprintf(table3, "tcp", c.Mac, c.IP, to),
+			fmt.Sprintf(table3, "udp", c.Mac, c.IP, to))
+	}
+
+	table2 = "table=2,priority=500,%s,dl_dst=%s,ip_dst=%s,tp_dst=%d," +
+		"actions=output:%d"
+	table3 = "table=3,priority=500,%s,dl_src=%s,ip_src=%s,tp_src=%d," +
+		"actions=output:LOCAL"
+	for from := range c.Container.FromPub {
+		flows = append(flows,
+			fmt.Sprintf(table2, "tcp", c.Mac, c.IP, from, c.vethPort),
+			fmt.Sprintf(table2, "udp", c.Mac, c.IP, from, c.vethPort),
+
+			fmt.Sprintf(table3, "tcp", c.Mac, c.IP, from),
+			fmt.Sprintf(table3, "udp", c.Mac, c.IP, from))
+	}
+
 	return flows
 }
 
@@ -216,10 +277,11 @@ func allFlows(containers []container) []string {
 	var gatewayBroadcastActions []string
 	for _, c := range containers {
 		gatewayBroadcastActions = append(gatewayBroadcastActions,
-			fmt.Sprintf("output:%d", c.veth))
+			fmt.Sprintf("output:%d", c.vethPort))
 	}
-	flows := append(staticFlows, containerFlows(containers)...)
-	return append(flows, "table=1,priority=850,dl_dst=ff:ff:ff:ff:ff:ff,actions="+
+
+	flows := append(staticFlows, allContainerFlows(containers)...)
+	return append(flows, "table=2,priority=1000,dl_dst=ff:ff:ff:ff:ff:ff,actions="+
 		strings.Join(gatewayBroadcastActions, ","))
 }
 
@@ -232,7 +294,11 @@ func resolveContainers(portMap map[string]int, containers []Container) []contain
 			continue
 		}
 
-		ofcs = append(ofcs, container{patch: patch, veth: veth, mac: c.Mac})
+		ofcs = append(ofcs, container{
+			Container: c,
+			patchPort: patch,
+			vethPort:  veth,
+		})
 	}
 	return ofcs
 }
@@ -248,6 +314,7 @@ func openflowPorts() (map[string]int, error) {
 }
 
 var ofctl = func(action string, flows []string) error {
+	c.Inc("ovs-ofctl")
 	cmd := exec.Command("ovs-ofctl", "-O", "OpenFlow13", action,
 		ipdef.QuiltBridge, "/dev/stdin")
 

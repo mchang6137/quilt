@@ -6,14 +6,15 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/quilt/quilt/counter"
 	"github.com/quilt/quilt/db"
 	"github.com/quilt/quilt/join"
+	"github.com/quilt/quilt/minion/nl"
 	"github.com/quilt/quilt/stitch"
 	"github.com/quilt/quilt/util"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/go-iptables/iptables"
-	"github.com/vishvananda/netlink"
 )
 
 // IPTables is an interface to *iptables.IPTables.
@@ -24,7 +25,9 @@ type IPTables interface {
 	List(string, string) ([]string, error)
 }
 
-func runNat(conn db.Conn) {
+var iptC = counter.New("Network IP Tables")
+
+func runNat(conn db.Conn, inboundPubIntf, outboundPubIntf string) {
 	tables := []db.TableType{db.ContainerTable, db.ConnectionTable, db.MinionTable}
 	for range conn.TriggerTick(30, tables...).C {
 		minion := conn.MinionSelf()
@@ -43,10 +46,36 @@ func runNat(conn db.Conn) {
 			continue
 		}
 
-		if err := updateNAT(ipt, containers, connections); err != nil {
+		err = updateNAT(ipt, containers, connections, inboundPubIntf,
+			outboundPubIntf)
+		if err != nil {
 			log.WithError(err).Error("Failed to update NAT rules")
 		}
 	}
+}
+
+// pickIntfs converts the command line arguments for NAT interfaces to the names
+// that should actually be used in the iptables rules.
+// If an interface is not specificied (i.e. the empty string is supplied), we use
+// the interface associated with the default route.
+func pickIntfs(inboundPubIntf, outboundPubIntf string) (string, string, error) {
+	var defaultRouteIntf string
+	var err error
+	if inboundPubIntf == "" || outboundPubIntf == "" {
+		defaultRouteIntf, err = getDefaultRouteIntf()
+		if err != nil {
+			return "", "", fmt.Errorf("get default interface: %s", err)
+		}
+	}
+
+	if inboundPubIntf == "" {
+		inboundPubIntf = defaultRouteIntf
+	}
+	if outboundPubIntf == "" {
+		outboundPubIntf = defaultRouteIntf
+	}
+
+	return inboundPubIntf, outboundPubIntf, nil
 }
 
 // updateNAT sets up iptables rules of three categories:
@@ -58,23 +87,23 @@ func runNat(conn db.Conn) {
 // "postrouting rules" are responsible for routing traffic from containers
 // to the public internet. They overwrite any pre-existing or outdated rules.
 func updateNAT(ipt IPTables, containers []db.Container,
-	connections []db.Connection) error {
+	connections []db.Connection, inboundPubIntf, outboundPubIntf string) (err error) {
 
-	publicInterface, err := getPublicInterface()
+	inboundPubIntf, outboundPubIntf, err = pickIntfs(inboundPubIntf, outboundPubIntf)
 	if err != nil {
-		return fmt.Errorf("get public interface: %s", err)
+		return err
 	}
 
 	if err := setDefaultRules(ipt); err != nil {
 		return err
 	}
 
-	prerouting := preroutingRules(publicInterface, containers, connections)
+	prerouting := preroutingRules(inboundPubIntf, containers, connections)
 	if err := syncChain(ipt, "nat", "PREROUTING", prerouting); err != nil {
 		return err
 	}
 
-	postrouting := postroutingRules(publicInterface, containers, connections)
+	postrouting := postroutingRules(outboundPubIntf, containers, connections)
 	return syncChain(ipt, "nat", "POSTROUTING", postrouting)
 }
 
@@ -123,6 +152,7 @@ func syncChain(ipt IPTables, table, chain string, target []string) error {
 
 	for _, r := range rulesToDel {
 		ruleBlueprint := strings.Split(r.(string), " ")
+		iptC.Inc("Delete")
 		if err := ipt.Delete(table, chain, ruleBlueprint...); err != nil {
 			return fmt.Errorf("iptables delete: %s", err)
 		}
@@ -130,6 +160,7 @@ func syncChain(ipt IPTables, table, chain string, target []string) error {
 
 	for _, r := range rulesToAdd {
 		ruleBlueprint := strings.Split(r.(string), " ")
+		iptC.Inc("Append")
 		if err := ipt.Append(table, chain, ruleBlueprint...); err != nil {
 			return fmt.Errorf("iptables append: %s", err)
 		}
@@ -139,6 +170,7 @@ func syncChain(ipt IPTables, table, chain string, target []string) error {
 }
 
 func getRules(ipt IPTables, table, chain string) (rules []string, err error) {
+	iptC.Inc("List")
 	rawRules, err := ipt.List(table, chain)
 	if err != nil {
 		return nil, err
@@ -163,7 +195,7 @@ func getRules(ipt IPTables, table, chain string) (rules []string, err error) {
 func preroutingRules(publicInterface string, containers []db.Container,
 	connections []db.Connection) (rules []string) {
 
-	// Map each label to all ports on which it can receive packets
+	// Map each hostname to all ports on which it can receive packets
 	// from the public internet.
 	portsFromWeb := make(map[string]map[int]struct{})
 	for _, conn := range connections {
@@ -180,15 +212,13 @@ func preroutingRules(publicInterface string, containers []db.Container,
 
 	// Map the container's port to the same port of the host.
 	for _, dbc := range containers {
-		for _, label := range dbc.Labels {
-			for port := range portsFromWeb[label] {
-				for _, protocol := range []string{"tcp", "udp"} {
-					rules = append(rules, fmt.Sprintf(
-						"-i %[1]s -p %[2]s -m %[2]s "+
-							"--dport %[3]d -j DNAT "+
-							"--to-destination %[4]s:%[3]d",
-						publicInterface, protocol, port, dbc.IP))
-				}
+		for port := range portsFromWeb[dbc.Hostname] {
+			for _, protocol := range []string{"tcp", "udp"} {
+				rules = append(rules, fmt.Sprintf(
+					"-i %[1]s -p %[2]s -m %[2]s "+
+						"--dport %[3]d -j DNAT "+
+						"--to-destination %[4]s:%[3]d",
+					publicInterface, protocol, port, dbc.IP))
 			}
 		}
 	}
@@ -199,7 +229,7 @@ func preroutingRules(publicInterface string, containers []db.Container,
 func postroutingRules(publicInterface string, containers []db.Container,
 	connections []db.Connection) (rules []string) {
 
-	// Map each label to all ports on which it can send packets
+	// Map each hostname to all ports on which it can send packets
 	// to the public internet.
 	portsToWeb := make(map[string]map[int]struct{})
 	for _, conn := range connections {
@@ -215,16 +245,14 @@ func postroutingRules(publicInterface string, containers []db.Container,
 	}
 
 	for _, dbc := range containers {
-		for _, label := range dbc.Labels {
-			for port := range portsToWeb[label] {
-				for _, protocol := range []string{"tcp", "udp"} {
-					rules = append(rules, fmt.Sprintf(
-						"-s %[1]s/32 -p %[2]s -m %[2]s "+
-							"--dport %[3]d -o %[4]s "+
-							"-j MASQUERADE",
-						dbc.IP, protocol, port, publicInterface,
-					))
-				}
+		for port := range portsToWeb[dbc.Hostname] {
+			for _, protocol := range []string{"tcp", "udp"} {
+				rules = append(rules, fmt.Sprintf(
+					"-s %[1]s/32 -p %[2]s -m %[2]s "+
+						"--dport %[3]d -o %[4]s "+
+						"-j MASQUERADE",
+					dbc.IP, protocol, port, publicInterface,
+				))
 			}
 		}
 	}
@@ -257,6 +285,7 @@ func setDefaultRules(ipt IPTables) error {
 		},
 	}
 	for _, r := range rules {
+		iptC.Inc("Append Unique")
 		err := ipt.AppendUnique(r.table, r.chain, r.ruleBlueprint...)
 		if err != nil {
 			return fmt.Errorf("iptables append: %s", err)
@@ -265,14 +294,15 @@ func setDefaultRules(ipt IPTables) error {
 	return nil
 }
 
-// getPublicInterfaceImpl gets the interface with the default route.
-func getPublicInterfaceImpl() (string, error) {
-	routes, err := routeList(nil, 0)
+// getDefaultRouteIntfImpl gets the interface with the default route.
+func getDefaultRouteIntfImpl() (string, error) {
+	c.Inc("Get Default Route")
+	routes, err := nl.N.RouteList(0)
 	if err != nil {
 		return "", fmt.Errorf("route list: %s", err)
 	}
 
-	var defaultRoute *netlink.Route
+	var defaultRoute *nl.Route
 	for _, r := range routes {
 		if r.Dst == nil {
 			defaultRoute = &r
@@ -284,7 +314,7 @@ func getPublicInterfaceImpl() (string, error) {
 		return "", errors.New("missing default route")
 	}
 
-	link, err := linkByIndex(defaultRoute.LinkIndex)
+	link, err := nl.N.LinkByIndex(defaultRoute.LinkIndex)
 	if err != nil {
 		return "", fmt.Errorf("default route missing interface: %s", err)
 	}
@@ -292,6 +322,4 @@ func getPublicInterfaceImpl() (string, error) {
 	return link.Attrs().Name, err
 }
 
-var routeList = netlink.RouteList
-var linkByIndex = netlink.LinkByIndex
-var getPublicInterface = getPublicInterfaceImpl
+var getDefaultRouteIntf = getDefaultRouteIntfImpl

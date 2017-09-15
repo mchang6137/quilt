@@ -142,8 +142,8 @@ func TestHostnamesToDNS(t *testing.T) {
 func TestSyncHostnamesWorker(t *testing.T) {
 	conn := db.New()
 	conn.Txn(db.AllTables...).Run(func(view db.Database) error {
-		dbl := view.InsertLabel()
-		dbl.Label = "label"
+		dbl := view.InsertLoadBalancer()
+		dbl.Name = "lb"
 		dbl.IP = "IP"
 		view.Commit(dbl)
 		return nil
@@ -158,12 +158,12 @@ func TestSyncHostnamesWorker(t *testing.T) {
 		return nil
 	})
 	syncHostnamesOnce(conn)
-	assert.Equal(t, []db.Hostname{{ID: 3, Hostname: "label", IP: "IP"}},
+	assert.Equal(t, []db.Hostname{{ID: 3, Hostname: "lb", IP: "IP"}},
 		conn.SelectFromHostname(nil))
 }
 
 type syncHostnameTest struct {
-	labels                     []db.Label
+	loadBalancers              []db.LoadBalancer
 	containers                 []db.Container
 	oldHostnames, expHostnames []db.Hostname
 }
@@ -171,48 +171,40 @@ type syncHostnameTest struct {
 func TestSyncHostnames(t *testing.T) {
 	tests := []syncHostnameTest{
 		{
-			labels: []db.Label{
+			loadBalancers: []db.LoadBalancer{
 				{
-					Label:        "foo",
-					IP:           "fooIP",
-					ContainerIPs: []string{"container", "ips"},
+					Name: "foo",
+					IP:   "fooIP",
 				},
 			},
 			expHostnames: []db.Hostname{
 				{Hostname: "foo", IP: "fooIP"},
-				{Hostname: "1.foo", IP: "container"},
-				{Hostname: "2.foo", IP: "ips"},
 			},
 		},
 		{
-			labels: []db.Label{
+			loadBalancers: []db.LoadBalancer{
 				{
-					Label:        "foo",
-					IP:           "fooIP",
-					ContainerIPs: []string{"container", "ips"},
+					Name: "foo",
+					IP:   "fooIP",
 				},
 				{
-					Label: "bar",
-					IP:    "barIP",
+					Name: "bar",
+					IP:   "barIP",
 				},
 			},
 			oldHostnames: []db.Hostname{
 				{Hostname: "foo", IP: "fooIP"},
-				{Hostname: "1.foo", IP: "container"},
-				{Hostname: "2.foo", IP: "ips"},
 			},
 			expHostnames: []db.Hostname{
 				{Hostname: "foo", IP: "fooIP"},
-				{Hostname: "1.foo", IP: "container"},
-				{Hostname: "2.foo", IP: "ips"},
 				{Hostname: "bar", IP: "barIP"},
 			},
 		},
 		{
-			labels: []db.Label{
+			loadBalancers: []db.LoadBalancer{
 				{
-					Label: "bar",
-					IP:    "barIP",
+					Name: "bar",
+					IP:   "barIP",
 				},
 			},
 			oldHostnames: []db.Hostname{
@@ -224,10 +216,10 @@ func TestSyncHostnames(t *testing.T) {
 			},
 		},
 		{
-			labels: []db.Label{
+			loadBalancers: []db.LoadBalancer{
 				{
-					Label: "foo",
-					IP:    "fooIP",
+					Name: "foo",
+					IP:   "fooIP",
 				},
 			},
 			containers: []db.Container{
@@ -252,8 +244,8 @@ func TestSyncHostnames(t *testing.T) {
 			etcd.Leader = true
 			view.Commit(etcd)
 
-			for _, l := range test.labels {
-				dbl := view.InsertLabel()
+			for _, l := range test.loadBalancers {
+				dbl := view.InsertLoadBalancer()
 				l.ID = dbl.ID
 				view.Commit(l)
 			}

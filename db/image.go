@@ -13,7 +13,18 @@ type Image struct {
 
 	// The ID of the built image.
 	DockerID string
+
+	// The build status of the image.
+	Status string
 }
+
+const (
+	// Building is the status string for when the image is being built.
+	Building = "building"
+
+	// Built is the status string for when the image has been built.
+	Built = "built"
+)
 
 // InsertImage creates a new image row and inserts it into the database.
 func (db Database) InsertImage() Image {
@@ -24,13 +35,22 @@ func (db Database) InsertImage() Image {
 
 // SelectFromImage gets all images in the database that satisfy 'check'.
 func (db Database) SelectFromImage(check func(Image) bool) []Image {
-	imageTable := db.accessTable(ImageTable)
-	result := []Image{}
-	for _, row := range imageTable.rows {
+	var result []Image
+	for _, row := range db.selectRows(ImageTable) {
 		if check == nil || check(row.(Image)) {
 			result = append(result, row.(Image))
 		}
 	}
+	return result
+}
+
+// SelectFromImage gets all images in the database connection that satisfy 'check'.
+func (conn Conn) SelectFromImage(check func(Image) bool) []Image {
+	var result []Image
+	conn.Txn(ImageTable).Run(func(view Database) error {
+		result = view.SelectFromImage(check)
+		return nil
+	})
 	return result
 }
 

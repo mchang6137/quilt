@@ -9,11 +9,14 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/quilt/quilt/counter"
 	"github.com/quilt/quilt/db"
 	"github.com/quilt/quilt/minion/docker"
 	"github.com/quilt/quilt/minion/network/plugin"
 	"github.com/quilt/quilt/util"
 )
+
+var c = counter.New("Scheduler")
 
 // Run blocks implementing the scheduler module.
 func Run(conn db.Conn, dk docker.Client) {
@@ -26,7 +29,7 @@ func Run(conn db.Conn, dk docker.Client) {
 
 	loopLog := util.NewEventTimer("Scheduler")
 	trig := conn.TriggerTick(60, db.MinionTable, db.ContainerTable,
-		db.PlacementTable, db.EtcdTable).C
+		db.PlacementTable, db.EtcdTable, db.ImageTable).C
 	for range trig {
 		loopLog.LogStart()
 		minion := conn.MinionSelf()

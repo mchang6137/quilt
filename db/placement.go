@@ -1,17 +1,19 @@
 package db
 
 // Placement represents a declaration about how containers should be placed.  These
-// directives can be made either relative to labels of other containers, or Machines
+// directives can be made either relative to other containers, or Machines
 // those containers run on.
 type Placement struct {
 	ID int
 
-	TargetLabel string
+	TargetContainer string
 
 	Exclusive bool
 
-	// Label Constraint
-	OtherLabel string
+	// Constraint based on co-location with another container. If Exclusive is
+	// true, then the TargetContainer cannot be placed on the same machine as
+	// OtherContainer.
+	OtherContainer string
 
 	// Machine Constraints
 	Provider   string
@@ -32,9 +34,8 @@ func (db Database) InsertPlacement() Placement {
 
 // SelectFromPlacement gets all placements in the database that satisfy 'check'.
 func (db Database) SelectFromPlacement(check func(Placement) bool) []Placement {
-	placementTable := db.accessTable(PlacementTable)
 	var result []Placement
-	for _, row := range placementTable.rows {
+	for _, row := range db.selectRows(PlacementTable) {
 		if check == nil || check(row.(Placement)) {
 			result = append(result, row.(Placement))
 		}

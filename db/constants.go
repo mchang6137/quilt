@@ -3,6 +3,7 @@ package db
 //The Role within the cluster each machine assumes.
 import (
 	"errors"
+	"fmt"
 
 	"github.com/quilt/quilt/minion/pb"
 )
@@ -49,31 +50,41 @@ func PBToRole(p pb.MinionConfig_Role) Role {
 	}
 }
 
-// A Provider implements a cloud interface on which machines may be instantiated.
-type Provider string
+// ProviderName describes one of the supported cloud providers. The strings
+// enumerated below must exactly match the name provided by users' JavaScript.
+type ProviderName string
 
 const (
-	// Amazon implements amazon EC2.
-	Amazon Provider = "Amazon"
+	// Amazon implements Amazon EC2.
+	Amazon ProviderName = "Amazon"
 
 	// Google implements Google Cloud Engine.
-	Google = "Google"
+	Google ProviderName = "Google"
 
 	// DigitalOcean implements Digital Ocean Droplets.
-	DigitalOcean = "DigitalOcean"
+	DigitalOcean ProviderName = "DigitalOcean"
 
 	// Vagrant implements local virtual machines.
-	Vagrant = "Vagrant"
+	Vagrant ProviderName = "Vagrant"
 )
 
-// ParseProvider returns the Provider represented by 'name' or an error.
-func ParseProvider(name string) (Provider, error) {
-	switch name {
-	case "Amazon", "DigitalOcean", "Google", "Vagrant":
-		return Provider(name), nil
-	default:
-		return "", errors.New("unknown provider")
+// AllProviders lists all of the providers that Quilt supports.
+var AllProviders = []ProviderName{
+	Amazon,
+	Google,
+	DigitalOcean,
+	Vagrant,
+}
+
+// ParseProvider returns the ProviderName represented by 'name' or an error.
+func ParseProvider(name string) (ProviderName, error) {
+	for _, provider := range AllProviders {
+		if string(provider) == name {
+			return provider, nil
+		}
 	}
+	return "", fmt.Errorf("provider %s not supported (supported "+
+		"providers: %v)", name, AllProviders)
 }
 
 // ParseRole returns the Role represented by the string 'role', or an error.
@@ -88,17 +99,4 @@ func ParseRole(role string) (Role, error) {
 	default:
 		return None, errors.New("unknown role")
 	}
-}
-
-// ProviderSlice is an alias for []Provider to allow for joins
-type ProviderSlice []Provider
-
-// Get returns the value contained at the given index
-func (ps ProviderSlice) Get(ii int) interface{} {
-	return ps[ii]
-}
-
-// Len returns the number of items in the slice
-func (ps ProviderSlice) Len() int {
-	return len(ps)
 }

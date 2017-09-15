@@ -10,12 +10,13 @@ type Minion struct {
 	AuthorizedKeys string `json:"-" rowStringer:"omit"`
 
 	// Below fields are included in the JSON encoding.
-	Role       Role
-	PrivateIP  string
-	Provider   string
-	Size       string
-	Region     string
-	FloatingIP string
+	Role        Role
+	PrivateIP   string
+	Provider    string
+	Size        string
+	Region      string
+	FloatingIP  string
+	HostSubnets []string
 }
 
 // InsertMinion creates a new Minion and inserts it into 'db'.
@@ -27,9 +28,8 @@ func (db Database) InsertMinion() Minion {
 
 // SelectFromMinion gets all minions in the database that satisfy the 'check'.
 func (db Database) SelectFromMinion(check func(Minion) bool) []Minion {
-	minionTable := db.accessTable(MinionTable)
-	result := []Minion{}
-	for _, row := range minionTable.rows {
+	var result []Minion
+	for _, row := range db.selectRows(MinionTable) {
 		if check == nil || check(row.(Minion)) {
 			result = append(result, row.(Minion))
 		}

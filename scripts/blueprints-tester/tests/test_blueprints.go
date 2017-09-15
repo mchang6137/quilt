@@ -5,29 +5,15 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	log "github.com/Sirupsen/logrus"
 
 	"github.com/quilt/quilt/stitch"
 )
 
-// workDir is the directory blueprints are placed during testing.
-const workDir = "/tmp/quilt-blueprint-test"
-
-func tryRunBlueprint(s blueprint) error {
-	os.Mkdir(workDir, 0755)
-	defer os.RemoveAll(workDir)
-	os.Chdir(workDir)
-
-	if err := run("git", "clone", s.repo, "."); err != nil {
-		return err
-	}
-
-	if err := run("npm", "install", "."); err != nil {
-		return err
-	}
-
-	_, err := stitch.FromFile(s.path)
+func tryRunBlueprint(blueprint string) error {
+	_, err := stitch.FromFile(blueprint)
 	return err
 }
 
@@ -41,54 +27,55 @@ func run(name string, args ...string) error {
 	return nil
 }
 
-type blueprint struct {
-	repo, path string
-}
-
-// TestBlueprints checks that the listed Quilt blueprints compile.
-func TestBlueprints() error {
-	blueprints := []blueprint{
-		{"https://github.com/quilt/tester", "./tests/100-logs/logs.js"},
-		{"https://github.com/quilt/tester",
-			"./tests/61-duplicate-cluster/duplicate-cluster.js"},
-		{"https://github.com/quilt/tester",
-			"./tests/60-duplicate-cluster-setup/duplicate-cluster-setup.js"},
-		{"https://github.com/quilt/tester", "./tests/40-stop/stop.js"},
-		{"https://github.com/quilt/tester", "./tests/30-mean/mean.js"},
-		{"https://github.com/quilt/tester", "./tests/20-spark/spark.js"},
-		{"https://github.com/quilt/tester", "./tests/15-bandwidth/bandwidth.js"},
-		{"https://github.com/quilt/tester", "./tests/10-network/network.js"},
-		{"https://github.com/quilt/tester",
-			"./tests/outbound-public/outbound-public.js"},
-		{"https://github.com/quilt/tester",
-			"./tests/inbound-public/inbound-public.js"},
-		{"https://github.com/quilt/tester",
-			"./tests/elasticsearch/elasticsearch.js"},
-		{"https://github.com/quilt/tester",
-			"./tests/build-dockerfile/build-dockerfile.js"},
-		{"https://github.com/quilt/tester", "./tests/etcd/etcd.js"},
-		{"https://github.com/quilt/tester", "./tests/zookeeper/zookeeper.js"},
-
-		{"https://github.com/quilt/nginx", "./main.js"},
-		{"https://github.com/quilt/spark", "./sparkPI.js"},
-		{"https://github.com/quilt/wordpress", "./wordpress-example.js"},
-		{"https://github.com/quilt/etcd", "./etcd-example.js"},
-		{"https://github.com/quilt/zookeeper", "./zookeeper-example.js"},
-		{"https://github.com/quilt/redis", "./redis-example.js"},
-		{"https://github.com/quilt/mean", "./example.js"},
-		{"https://github.com/quilt/elasticsearch", "./main.js"},
-		{"https://github.com/quilt/kibana", "./main.js"},
-		{"https://github.com/quilt/django", "./django-example.js"},
-		{"https://github.com/quilt/php-apache", "./main.js"},
-		{"https://github.com/quilt/mongo", "./example.js"},
-		{"https://github.com/quilt/tester", "./tester-runner-example.js"},
-		{"https://github.com/quilt/lobsters", "./lobsters-example.js"},
-		{"https://github.com/quilt/infrastructure", "./floating-ip.js"},
+// TestExampleBlueprints tests that all blueprints in the examples directory compile.
+func TestExampleBlueprints() error {
+	// Use absolute rather than relative paths, so that the Chdir command below works
+	// regardless of the starting directory.
+	absolutePath, err := filepath.Abs("../../examples/*/*.js")
+	if err != nil {
+		return err
 	}
 
-	for _, s := range blueprints {
-		log.Infof("Testing %s in %s", s.path, s.repo)
-		if err := tryRunBlueprint(s); err != nil {
+	blueprints, err := filepath.Glob(absolutePath)
+	if err != nil {
+		return err
+	}
+
+	for _, blueprint := range blueprints {
+		log.Infof("Testing %s", blueprint)
+
+		// Change into the directory of the blueprint in order to install
+		// dependencies.
+		os.Chdir(filepath.Dir(blueprint))
+		if err = run("npm", "install", "."); err != nil {
+			return err
+		}
+
+		if err = tryRunBlueprint(blueprint); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TestCIBlueprints checks that the listed quilt-tester blueprints compile.
+func TestCIBlueprints() error {
+	// Make the working directory the root of the Quilt repo so that the following
+	// relative paths will work.
+	os.Chdir("../../quilt-tester")
+
+	if err := run("npm", "install", "."); err != nil {
+		return err
+	}
+
+	blueprints, err := filepath.Glob("./tests/*/*.js")
+	if err != nil {
+		return err
+	}
+
+	for _, blueprint := range blueprints {
+		log.Infof("Testing %s", blueprint)
+		if err := tryRunBlueprint("./" + blueprint); err != nil {
 			return err
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/quilt/quilt/counter"
 	"github.com/quilt/quilt/db"
 	"github.com/quilt/quilt/join"
 	"github.com/quilt/quilt/minion/ipdef"
@@ -25,13 +26,16 @@ type dnsTable struct {
 
 var table *dnsTable
 
+var dnsC = counter.New("Network Dns")
+
 func runDNS(conn db.Conn) {
 	go syncHostnames(conn)
 	go serveDNS(conn)
 }
 
 func syncHostnames(conn db.Conn) {
-	for range conn.Trigger(db.LabelTable, db.ContainerTable, db.MinionTable).C {
+	for range conn.Trigger(db.LoadBalancerTable, db.ContainerTable,
+		db.MinionTable).C {
 		syncHostnamesOnce(conn)
 	}
 }
@@ -47,22 +51,17 @@ func syncHostnamesOnce(conn db.Conn) {
 		return
 	}
 
-	conn.Txn(db.LabelTable, db.ContainerTable, db.HostnameTable).Run(joinHostnames)
+	conn.Txn(db.LoadBalancerTable, db.ContainerTable, db.HostnameTable).
+		Run(joinHostnames)
 }
 
 func joinHostnames(view db.Database) error {
 	var target []db.Hostname
-	for _, label := range view.SelectFromLabel(nil) {
-		if label.IP != "" {
+	for _, lb := range view.SelectFromLoadBalancer(nil) {
+		if lb.IP != "" {
 			target = append(target, db.Hostname{
-				Hostname: label.Label,
-				IP:       label.IP,
-			})
-		}
-		for i, containerIP := range label.ContainerIPs {
-			target = append(target, db.Hostname{
-				Hostname: fmt.Sprintf("%d.%s", i+1, label.Label),
-				IP:       containerIP,
+				Hostname: lb.Name,
+				IP:       lb.IP,
 			})
 		}
 	}
@@ -117,6 +116,7 @@ func serveDNSOnce(conn db.Conn) {
 }
 
 func updateTable(table *dnsTable, hostnames []db.Hostname) *dnsTable {
+	dnsC.Inc("Update Server")
 	records := hostnamesToDNS(hostnames)
 	if table != nil {
 		table.recordLock.Lock()
@@ -142,6 +142,7 @@ func updateTable(table *dnsTable, hostnames []db.Hostname) *dnsTable {
 }
 
 func (table *dnsTable) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
+	dnsC.Inc("Request")
 	defer w.Close()
 
 	log.Debug("DNS Request: ", req)
@@ -198,6 +199,7 @@ func (table *dnsTable) genResponse(req *dns.Msg) *dns.Msg {
 }
 
 func (table *dnsTable) lookupA(name string) []net.IP {
+	dnsC.Inc("Lookup External")
 	if strings.HasSuffix(name, ".q.") {
 		table.recordLock.Lock()
 		ip := table.records[name]

@@ -1,8 +1,6 @@
 package minion
 
 import (
-	"sort"
-
 	"github.com/quilt/quilt/db"
 	"github.com/quilt/quilt/join"
 	"github.com/quilt/quilt/stitch"
@@ -17,34 +15,60 @@ func updatePolicy(view db.Database, blueprint string) {
 		return
 	}
 
+	c.Inc("Update Policy")
 	updateImages(view, compiled)
 	updateContainers(view, compiled)
+	updateLoadBalancers(view, compiled)
 	updateConnections(view, compiled)
 	updatePlacements(view, compiled)
 }
 
 // `portPlacements` creates exclusive placement rules such that no two containers
 // listening on the same public port get placed on the same machine.
-func portPlacements(connections []db.Connection) (placements []db.Placement) {
+func portPlacements(connections []db.Connection, containers []db.Container) (
+	placements []db.Placement) {
+
+	hostnameToContainer := map[string]db.Container{}
+	for _, c := range containers {
+		hostnameToContainer[c.Hostname] = c
+	}
+
 	ports := make(map[int][]string)
-	for _, c := range connections {
-		if c.From != stitch.PublicInternetLabel {
+	for _, conn := range connections {
+		if conn.From != stitch.PublicInternetLabel {
+			continue
+		}
+
+		toContainer, ok := hostnameToContainer[conn.To]
+		if !ok {
+			log.WithField("connection", conn).
+				WithField("hostname", conn.To).
+				Warn("Public connection in terms of unknown hostname." +
+					"Ignoring.")
 			continue
 		}
 
 		// XXX: Public connections do not currently support ranges, so we can
 		// safely consider just the MinPort.
-		ports[c.MinPort] = append(ports[c.MinPort], c.To)
+		ports[conn.MinPort] = append(ports[conn.MinPort], toContainer.StitchID)
 	}
 
-	for _, labels := range ports {
-		for _, tgt := range labels {
-			for _, other := range labels {
+	// Create placement rules for all combinations of containers that listen on
+	// the same port. We do not need to create a rule for every permutation
+	// because order does not matter for the `TargetContainer` and
+	// `OtherContainer` fields -- the placement is equivalent if the two fields
+	// are swapped.  We do so by creating a placement rule between each
+	// container, and the containers after it. There is no need to create rules
+	// for the preceding containers because the previous rules will have
+	// covered it.
+	for _, cids := range ports {
+		for i, tgt := range cids {
+			for _, other := range cids[i+1:] {
 				placements = append(placements,
 					db.Placement{
-						Exclusive:   true,
-						TargetLabel: tgt,
-						OtherLabel:  other,
+						Exclusive:       true,
+						TargetContainer: tgt,
+						OtherContainer:  other,
 					},
 				)
 			}
@@ -55,16 +79,17 @@ func portPlacements(connections []db.Connection) (placements []db.Placement) {
 }
 
 func updatePlacements(view db.Database, blueprint stitch.Stitch) {
-	placements := db.PlacementSlice(portPlacements(view.SelectFromConnection(nil)))
+	connections := view.SelectFromConnection(nil)
+	containers := view.SelectFromContainer(nil)
+	placements := db.PlacementSlice(portPlacements(connections, containers))
 	for _, sp := range blueprint.Placements {
 		placements = append(placements, db.Placement{
-			TargetLabel: sp.TargetLabel,
-			Exclusive:   sp.Exclusive,
-			OtherLabel:  sp.OtherLabel,
-			Provider:    sp.Provider,
-			Size:        sp.Size,
-			Region:      sp.Region,
-			FloatingIP:  sp.FloatingIP,
+			TargetContainer: sp.TargetContainerID,
+			Exclusive:       sp.Exclusive,
+			Provider:        sp.Provider,
+			Size:            sp.Size,
+			Region:          sp.Region,
+			FloatingIP:      sp.FloatingIP,
 		})
 	}
 
@@ -90,9 +115,71 @@ func updatePlacements(view db.Database, blueprint stitch.Stitch) {
 	}
 }
 
+func updateLoadBalancers(view db.Database, blueprint stitch.Stitch) {
+	var stitchLoadBalancers db.LoadBalancerSlice
+	for _, lb := range blueprint.LoadBalancers {
+		stitchLoadBalancers = append(stitchLoadBalancers, db.LoadBalancer{
+			Name:      lb.Name,
+			Hostnames: lb.Hostnames,
+		})
+	}
+
+	key := func(intf interface{}) interface{} {
+		return intf.(db.LoadBalancer).Name
+	}
+
+	dbLoadBalancers := db.LoadBalancerSlice(view.SelectFromLoadBalancer(nil))
+	pairs, toAdd, toRemove := join.HashJoin(stitchLoadBalancers, dbLoadBalancers,
+		key, key)
+
+	for _, intf := range toRemove {
+		view.Remove(intf.(db.LoadBalancer))
+	}
+
+	for _, intf := range toAdd {
+		pairs = append(pairs, join.Pair{L: intf, R: view.InsertLoadBalancer()})
+	}
+
+	for _, pair := range pairs {
+		dbLoadBalancer := pair.R.(db.LoadBalancer)
+		stitchLoadBalancer := pair.L.(db.LoadBalancer)
+
+		// Modify the original database load balancer so that we preserve
+		// whatever IP the load balancer might have already been allocated.
+		dbLoadBalancer.Name = stitchLoadBalancer.Name
+		dbLoadBalancer.Hostnames = stitchLoadBalancer.Hostnames
+		view.Commit(dbLoadBalancer)
+	}
+}
+
 func updateConnections(view db.Database, blueprint stitch.Stitch) {
-	scs, vcs := stitch.ConnectionSlice(blueprint.Connections),
-		view.SelectFromConnection(nil)
+	scs := stitch.ConnectionSlice(blueprint.Connections)
+
+	// Setup connections to load balanced containers. Load balancing works by
+	// rewriting the load balancer IPs to the IP address of one of the load
+	// balanced containers. This means allowing connections only to the load
+	// balancer IP address is insufficient -- the container must also be able
+	// to communicate directly with the containers behind the load balancer.
+	loadBalancers := map[string]stitch.LoadBalancer{}
+	for _, lb := range blueprint.LoadBalancers {
+		loadBalancers[lb.Name] = lb
+	}
+
+	for _, c := range scs {
+		lb, ok := loadBalancers[c.To]
+		if !ok {
+			continue
+		}
+
+		for _, hostname := range lb.Hostnames {
+			scs = append(scs, stitch.Connection{
+				From:    c.From,
+				To:      hostname,
+				MinPort: c.MinPort,
+				MaxPort: c.MaxPort,
+			})
+		}
+	}
 
 	dbcKey := func(val interface{}) interface{} {
 		c := val.(db.Connection)
@@ -104,6 +191,7 @@ func updateConnections(view db.Database, blueprint stitch.Stitch) {
 		}
 	}
 
+	vcs := view.SelectFromConnection(nil)
 	pairs, stitches, dbcs := join.HashJoin(scs, db.ConnectionSlice(vcs), nil, dbcKey)
 
 	for _, dbc := range dbcs {
@@ -129,7 +217,7 @@ func updateConnections(view db.Database, blueprint stitch.Stitch) {
 func queryContainers(blueprint stitch.Stitch) []db.Container {
 	containers := map[string]*db.Container{}
 	for _, c := range blueprint.Containers {
-		containers[c.ID] = &db.Container{
+		containers[c.Hostname] = &db.Container{
 			StitchID:          c.ID,
 			Command:           c.Command,
 			Env:               c.Env,
@@ -137,12 +225,6 @@ func queryContainers(blueprint stitch.Stitch) []db.Container {
 			Image:             c.Image.Name,
 			Dockerfile:        c.Image.Dockerfile,
 			Hostname:          c.Hostname,
-		}
-	}
-
-	for _, label := range blueprint.Labels {
-		for _, id := range label.IDs {
-			containers[id].Labels = append(containers[id].Labels, label.Name)
 		}
 	}
 
@@ -173,11 +255,6 @@ func updateContainers(view db.Database, blueprint stitch.Stitch) {
 	for _, pair := range pairs {
 		newc := pair.L.(db.Container)
 		dbc := pair.R.(db.Container)
-
-		// By sorting the labels we prevent the database from getting confused
-		// when their order is non deterministic.
-		dbc.Labels = newc.Labels
-		sort.Sort(sort.StringSlice(dbc.Labels))
 
 		dbc.Command = newc.Command
 		dbc.Image = newc.Image

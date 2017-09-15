@@ -1,38 +1,33 @@
 package stitch
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 )
 
 // A Stitch is an abstract representation of the policy language.
 type Stitch struct {
-	Containers  []Container  `json:",omitempty"`
-	Labels      []Label      `json:",omitempty"`
-	Connections []Connection `json:",omitempty"`
-	Placements  []Placement  `json:",omitempty"`
-	Machines    []Machine    `json:",omitempty"`
+	Containers    []Container    `json:",omitempty"`
+	LoadBalancers []LoadBalancer `json:",omitempty"`
+	Connections   []Connection   `json:",omitempty"`
+	Placements    []Placement    `json:",omitempty"`
+	Machines      []Machine      `json:",omitempty"`
 
 	AdminACL  []string `json:",omitempty"`
 	MaxPrice  float64  `json:",omitempty"`
 	Namespace string   `json:",omitempty"`
-
-	Invariants []invariant `json:",omitempty"`
 }
 
-// A Placement constraint guides where containers may be scheduled, either relative to
-// the labels of other containers, or the machine the container will run on.
+// A Placement constraint guides on what type of machine a container can be
+// scheduled.
 type Placement struct {
-	TargetLabel string `json:",omitempty"`
+	TargetContainerID string `json:",omitempty"`
 
 	Exclusive bool `json:",omitempty"`
-
-	// Label Constraint
-	OtherLabel string `json:",omitempty"`
 
 	// Machine Constraints
 	Provider   string `json:",omitempty"`
@@ -58,15 +53,14 @@ type Container struct {
 	Hostname          string            `json:",omitempty"`
 }
 
-// A Label represents a logical group of containers.
-type Label struct {
-	Name        string   `json:",omitempty"`
-	IDs         []string `json:",omitempty"`
-	Annotations []string `json:",omitempty"`
+// A LoadBalancer represents a load balanced group of containers.
+type LoadBalancer struct {
+	Name      string   `json:",omitempty"`
+	Hostnames []string `json:",omitempty"`
 }
 
-// A Connection allows containers implementing the From label to speak to containers
-// implementing the To label in ports in the range [MinPort, MaxPort]
+// A Connection allows the container with the `From` hostname to speak to the container
+// with the `To` hostname in ports in the range [MinPort, MaxPort]
 type Connection struct {
 	From    string `json:",omitempty"`
 	To      string `json:",omitempty"`
@@ -117,47 +111,42 @@ func FromFile(filename string) (Stitch, error) {
 			"failed to locate Node.js. Is it installed and in your PATH?")
 	}
 
-	stderr := bytes.NewBuffer(nil)
-	cmd := exec.Command("node", "-p",
+	outFile, err := ioutil.TempFile("", "quilt-out")
+	if err != nil {
+		return Stitch{}, fmt.Errorf("failed to create deployment file: %s", err)
+	}
+	defer outFile.Close()
+	defer os.Remove(outFile.Name())
+
+	cmd := exec.Command("node", "-e",
 		fmt.Sprintf(
 			`require("%s");
-			JSON.stringify(global._quiltDeployment.toQuiltRepresentation());`,
-			filename,
+			require('fs').writeFileSync("%s",
+			  JSON.stringify(global._quiltDeployment.toQuiltRepresentation())
+		    );`,
+			filename, outFile.Name(),
 		),
 	)
-	cmd.Stderr = stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return Stitch{}, errors.New(stderr.String())
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+	if err := cmd.Run(); err != nil {
+		return Stitch{}, err
 	}
-	// If there wasn't an error, still print stderr, in case there were any
-	// warnings or other non-fatal errors.
-	fmt.Fprint(os.Stderr, stderr.String())
 
-	return FromJSON(string(out))
+	depl, err := ioutil.ReadAll(outFile)
+	if err != nil {
+		return Stitch{}, fmt.Errorf("failed to read deployment file: %s", err)
+	}
+	return FromJSON(string(depl))
 }
 
 // FromJSON gets a Stitch handle from the deployment representation.
 func FromJSON(jsonStr string) (stc Stitch, err error) {
 	err = json.Unmarshal([]byte(jsonStr), &stc)
 	if err != nil {
-		return Stitch{}, err
+		err = fmt.Errorf("unable to parse blueprint: %s", err)
 	}
-
-	if len(stc.Invariants) == 0 {
-		return stc, nil
-	}
-
-	graph, err := InitializeGraph(stc)
-	if err != nil {
-		return Stitch{}, err
-	}
-
-	if err := checkInvariants(graph, stc.Invariants); err != nil {
-		return Stitch{}, err
-	}
-
-	return stc, nil
+	return stc, err
 }
 
 // String returns the Stitch in its deployment representation.

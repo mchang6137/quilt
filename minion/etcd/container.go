@@ -17,7 +17,7 @@ const containerPath = "/containers"
 func runContainer(conn db.Conn, store Store) {
 	etcdWatch := store.Watch(containerPath, 1*time.Second)
 	trigg := conn.TriggerTick(60, db.ContainerTable)
-	for range joinNotifiers(trigg.C, etcdWatch) {
+	for range util.JoinNotifiers(trigg.C, etcdWatch) {
 		if err := runContainerOnce(conn, store); err != nil {
 			log.WithError(err).Warn("Failed to sync containers with Etcd.")
 		}
@@ -31,9 +31,11 @@ func runContainerOnce(conn db.Conn, store Store) error {
 	}
 
 	if conn.EtcdLeader() {
+		c.Inc("Run Container Leader")
 		return updateLeader(conn, store, etcdStr)
 	}
 
+	c.Inc("Run Container Worker")
 	updateNonLeader(conn, etcdStr)
 	return nil
 }
@@ -83,8 +85,8 @@ func joinContainers(view db.Database, etcdDBCs []db.Container) {
 		dbc := iface.(db.Container)
 
 		return struct {
-			IP                string
 			Hostname          string
+			IP                string
 			StitchID          string
 			Image             string
 			ImageID           string
@@ -92,8 +94,8 @@ func joinContainers(view db.Database, etcdDBCs []db.Container) {
 			Env               string
 			FilepathToContent string
 		}{
-			IP:                dbc.IP,
 			Hostname:          dbc.Hostname,
+			IP:                dbc.IP,
 			StitchID:          dbc.StitchID,
 			Image:             dbc.Image,
 			ImageID:           dbc.ImageID,
@@ -127,9 +129,9 @@ func joinContainers(view db.Database, etcdDBCs []db.Container) {
 		dbc.Image = edbc.Image
 		dbc.ImageID = edbc.ImageID
 		dbc.Command = edbc.Command
-		dbc.Labels = edbc.Labels
 		dbc.Env = edbc.Env
 		dbc.FilepathToContent = edbc.FilepathToContent
+		dbc.Hostname = edbc.Hostname
 		view.Commit(dbc)
 	}
 }

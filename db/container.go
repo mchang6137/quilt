@@ -21,7 +21,6 @@ type Container struct {
 	DockerID          string            `json:",omitempty"`
 	Status            string            `json:",omitempty"`
 	Command           []string          `json:",omitempty"`
-	Labels            []string          `json:",omitempty"`
 	Env               map[string]string `json:",omitempty"`
 	FilepathToContent map[string]string `json:",omitempty"`
 	Hostname          string            `json:",omitempty"`
@@ -44,9 +43,8 @@ func (db Database) InsertContainer() Container {
 
 // SelectFromContainer gets all containers in the database that satisfy 'check'.
 func (db Database) SelectFromContainer(check func(Container) bool) []Container {
-	containerTable := db.accessTable(ContainerTable)
 	var result []Container
-	for _, row := range containerTable.rows {
+	for _, row := range db.selectRows(ContainerTable) {
 		if check == nil || check(row.(Container)) {
 			result = append(result, row.(Container))
 		}
@@ -97,10 +95,6 @@ func (c Container) String() string {
 
 	if c.Hostname != "" {
 		tags = append(tags, fmt.Sprintf("Hostname: %s", c.Hostname))
-	}
-
-	if len(c.Labels) > 0 {
-		tags = append(tags, fmt.Sprintf("Labels: %s", c.Labels))
 	}
 
 	if len(c.Env) > 0 {

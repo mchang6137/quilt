@@ -7,11 +7,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/quilt/quilt/counter"
 	"github.com/quilt/quilt/minion/ipdef"
 	"github.com/quilt/quilt/minion/network/openflow"
+	"github.com/quilt/quilt/minion/nl"
 
 	dnet "github.com/docker/go-plugins-helpers/network"
-	"github.com/vishvananda/netlink"
 
 	log "github.com/Sirupsen/logrus"
 )
@@ -31,6 +32,8 @@ var (
 
 type driver struct{}
 
+var c = counter.New("Network Plugin")
+
 const mtu int = 1400
 
 // Run runs the network driver and starts the server to listen for requests. It will
@@ -42,7 +45,7 @@ func Run() {
 	go vsctlRun()
 
 	go func() {
-		err := h.ServeUnix("root", pluginSocket)
+		err := h.ServeUnix(pluginSocket, 0600)
 		if err != nil {
 			// If the driver fails to start, we can't boot any containers,
 			// so we may as well panic.
@@ -65,12 +68,14 @@ func Run() {
 
 // GetCapabilities returns the capabilities of this network driver.
 func (d driver) GetCapabilities() (*dnet.CapabilitiesResponse, error) {
+	c.Inc("Capabilities")
 	return &dnet.CapabilitiesResponse{Scope: dnet.LocalScope}, nil
 }
 
 // CreateEndpoint acknowledges the request, but does not actually do anything.
 func (d driver) CreateEndpoint(req *dnet.CreateEndpointRequest) (
 	*dnet.CreateEndpointResponse, error) {
+	c.Inc("Create Endpoint")
 
 	addr, _, err := net.ParseCIDR(req.Interface.Address)
 	if err != nil {
@@ -79,10 +84,7 @@ func (d driver) CreateEndpoint(req *dnet.CreateEndpointRequest) (
 
 	outer := ipdef.IFName(req.EndpointID)
 	inner := ipdef.IFName("tmp_" + req.EndpointID)
-	err = linkAdd(&netlink.Veth{
-		LinkAttrs: netlink.LinkAttrs{Name: outer, MTU: mtu},
-		PeerName:  inner})
-	if err != nil {
+	if err := nl.N.AddVeth(outer, inner, mtu); err != nil {
 		return nil, fmt.Errorf("failed to create veth: %s", err)
 	}
 
@@ -91,7 +93,7 @@ func (d driver) CreateEndpoint(req *dnet.CreateEndpointRequest) (
 		return nil, fmt.Errorf("failed to find link %s: %s", outer, err)
 	}
 
-	if err := linkSetUp(outerLink); err != nil {
+	if err := nl.N.LinkSetUp(outerLink); err != nil {
 		return nil, fmt.Errorf("failed to bring up link %s: %s", outer, err)
 	}
 
@@ -110,7 +112,11 @@ func (d driver) CreateEndpoint(req *dnet.CreateEndpointRequest) (
 		return nil, fmt.Errorf("ovs-vsctl: %v", err)
 	}
 
-	err = ofctl(openflow.Container{Veth: outer, Patch: peerQuilt, Mac: mac})
+	err = ofctl(openflow.Container{
+		Veth:  outer,
+		Patch: peerQuilt,
+		Mac:   mac,
+		IP:    addr.String()})
 	if err != nil {
 		// Problems with OpenFlow can be repaired later so just log.
 		log.WithError(err).Warn("Failed to add OpenFlow rules")
@@ -126,6 +132,7 @@ func (d driver) CreateEndpoint(req *dnet.CreateEndpointRequest) (
 
 // EndpointInfo will return an error if the endpoint does not exist.
 func (d driver) EndpointInfo(req *dnet.InfoRequest) (*dnet.InfoResponse, error) {
+	c.Inc("Endpoint Info")
 	if _, err := getOuterLink(req.EndpointID); err != nil {
 		return nil, err
 	}
@@ -134,6 +141,7 @@ func (d driver) EndpointInfo(req *dnet.InfoRequest) (*dnet.InfoResponse, error) 
 
 // DeleteEndpoint cleans up state associated with a docker endpoint.
 func (d driver) DeleteEndpoint(req *dnet.DeleteEndpointRequest) error {
+	c.Inc("Delete Endpoint")
 	peerBr, peerQuilt := ipdef.PatchPorts(req.EndpointID)
 	err := vsctl([][]string{
 		{"del-port", ipdef.QuiltBridge, ipdef.IFName(req.EndpointID)},
@@ -148,7 +156,7 @@ func (d driver) DeleteEndpoint(req *dnet.DeleteEndpointRequest) error {
 		return fmt.Errorf("failed to find link %s: %s", req.EndpointID, err)
 	}
 
-	if err := linkDel(outer); err != nil {
+	if err := nl.N.LinkDel(outer); err != nil {
 		return fmt.Errorf("failed to delete link %s: %s", req.EndpointID, err)
 	}
 
@@ -157,6 +165,7 @@ func (d driver) DeleteEndpoint(req *dnet.DeleteEndpointRequest) error {
 
 // Join method is invoked when a Sandbox is attached to an endpoint.
 func (d driver) Join(req *dnet.JoinRequest) (*dnet.JoinResponse, error) {
+	c.Inc("Join")
 	inner := ipdef.IFName("tmp_" + req.EndpointID)
 	resp := &dnet.JoinResponse{}
 	resp.Gateway = ipdef.GatewayIP.String()
@@ -164,12 +173,6 @@ func (d driver) Join(req *dnet.JoinRequest) (*dnet.JoinResponse, error) {
 	return resp, nil
 }
 
-func getOuterLink(eid string) (netlink.Link, error) {
-	return linkByName(ipdef.IFName(eid))
+func getOuterLink(eid string) (nl.Link, error) {
+	return nl.N.LinkByName(ipdef.IFName(eid))
 }
-
-// Mock variables for unit testing
-var linkAdd = netlink.LinkAdd
-var linkDel = netlink.LinkDel
-var linkSetUp = netlink.LinkSetUp
-var linkByName = netlink.LinkByName

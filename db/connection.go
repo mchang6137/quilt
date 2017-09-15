@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-// A Connection allows the members of two labels to speak to each other on the port
+// A Connection allows two hostnames to speak to each other on the port
 // range [MinPort, MaxPort] inclusive.
 type Connection struct {
 	ID int `json:"-"`
@@ -24,9 +24,8 @@ func (db Database) InsertConnection() Connection {
 
 // SelectFromConnection gets all connections in the database that satisfy 'check'.
 func (db Database) SelectFromConnection(check func(Connection) bool) []Connection {
-	connTable := db.accessTable(ConnectionTable)
 	var result []Connection
-	for _, row := range connTable.rows {
+	for _, row := range db.selectRows(ConnectionTable) {
 		if check == nil || check(row.(Connection)) {
 			result = append(result, row.(Connection))
 		}
@@ -69,7 +68,7 @@ func (c Connection) less(r row) bool {
 		return c.To < o.To
 	case c.MaxPort != o.MaxPort:
 		return c.MaxPort < o.MaxPort
-	case c.MinPort != o.MaxPort:
+	case c.MinPort != o.MinPort:
 		return c.MinPort < o.MinPort
 	default:
 		return c.ID < o.ID

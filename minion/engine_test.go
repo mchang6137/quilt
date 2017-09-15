@@ -1,6 +1,8 @@
 package minion
 
 import (
+	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -22,16 +24,17 @@ func TestContainerTxn(t *testing.T) {
 	stc := stitch.Stitch{
 		Containers: []stitch.Container{
 			{
-				ID:      "f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
-				Image:   stitch.Image{Name: "alpine"},
-				Command: []string{"tail"},
+				Hostname: "foo",
+				ID:       "f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
+				Image:    stitch.Image{Name: "alpine"},
+				Command:  []string{"tail"},
 			},
 		},
-		Labels: []stitch.Label{
+		LoadBalancers: []stitch.LoadBalancer{
 			{
 				Name: "a",
-				IDs: []string{
-					"f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
+				Hostnames: []string{
+					"foo",
 				},
 			},
 		},
@@ -45,28 +48,30 @@ func TestContainerTxn(t *testing.T) {
 	testContainerTxn(t, conn, stitch.Stitch{
 		Containers: []stitch.Container{
 			{
-				ID:      "f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
-				Image:   stitch.Image{Name: "alpine"},
-				Command: []string{"tail"},
+				Hostname: "foo",
+				ID:       "f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
+				Image:    stitch.Image{Name: "alpine"},
+				Command:  []string{"tail"},
 			},
 			{
-				ID:      "6e24c8cbeb63dbffcc82730d01b439e2f5085f59",
-				Image:   stitch.Image{Name: "alpine"},
-				Command: []string{"tail"},
+				Hostname: "bar",
+				ID:       "6e24c8cbeb63dbffcc82730d01b439e2f5085f59",
+				Image:    stitch.Image{Name: "alpine"},
+				Command:  []string{"tail"},
 			},
 		},
-		Labels: []stitch.Label{
+		LoadBalancers: []stitch.LoadBalancer{
 			{
 				Name: "b",
-				IDs: []string{
-					"f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
+				Hostnames: []string{
+					"foo",
 				},
 			},
 			{
 				Name: "a",
-				IDs: []string{
-					"f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
-					"6e24c8cbeb63dbffcc82730d01b439e2f5085f59",
+				Hostnames: []string{
+					"foo",
+					"bar",
 				},
 			},
 		},
@@ -76,28 +81,30 @@ func TestContainerTxn(t *testing.T) {
 	testContainerTxn(t, conn, stitch.Stitch{
 		Containers: []stitch.Container{
 			{
-				ID:      "0b8a2ed7d14d78a388375025223b05d072bbaec3",
-				Image:   stitch.Image{Name: "alpine"},
-				Command: []string{"cat"},
+				Hostname: "foo",
+				ID:       "0b8a2ed7d14d78a388375025223b05d072bbaec3",
+				Image:    stitch.Image{Name: "alpine"},
+				Command:  []string{"cat"},
 			},
 			{
-				ID:      "f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
-				Image:   stitch.Image{Name: "alpine"},
-				Command: []string{"tail"},
+				Hostname: "bar",
+				ID:       "f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
+				Image:    stitch.Image{Name: "alpine"},
+				Command:  []string{"tail"},
 			},
 		},
-		Labels: []stitch.Label{
+		LoadBalancers: []stitch.LoadBalancer{
 			{
 				Name: "b",
-				IDs: []string{
-					"0b8a2ed7d14d78a388375025223b05d072bbaec3",
+				Hostnames: []string{
+					"foo",
 				},
 			},
 			{
 				Name: "a",
-				IDs: []string{
-					"0b8a2ed7d14d78a388375025223b05d072bbaec3",
-					"f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
+				Hostnames: []string{
+					"foo",
+					"bar",
 				},
 			},
 		},
@@ -107,53 +114,30 @@ func TestContainerTxn(t *testing.T) {
 	testContainerTxn(t, conn, stitch.Stitch{
 		Containers: []stitch.Container{
 			{
-				ID:      "7a6244b8d2bfa10ee2fcbe6836a0519e116aee31",
-				Image:   stitch.Image{Name: "ubuntu"},
-				Command: []string{"cat"},
+				Hostname: "foo",
+				ID:       "7a6244b8d2bfa10ee2fcbe6836a0519e116aee31",
+				Image:    stitch.Image{Name: "ubuntu"},
+				Command:  []string{"cat"},
 			},
 			{
-				ID:      "f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
-				Image:   stitch.Image{Name: "alpine"},
-				Command: []string{"tail"},
+				Hostname: "bar",
+				ID:       "f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
+				Image:    stitch.Image{Name: "alpine"},
+				Command:  []string{"tail"},
 			},
 		},
-		Labels: []stitch.Label{
+		LoadBalancers: []stitch.LoadBalancer{
 			{
 				Name: "b",
-				IDs: []string{
-					"7a6244b8d2bfa10ee2fcbe6836a0519e116aee31",
+				Hostnames: []string{
+					"foo",
 				},
 			},
 			{
 				Name: "a",
-				IDs: []string{
-					"7a6244b8d2bfa10ee2fcbe6836a0519e116aee31",
-					"f133411ac23f45342a7b8b89bbe5e9efd0e711e5",
-				},
-			},
-		},
-	})
-	assert.True(t, fired(trigg))
-
-	testContainerTxn(t, conn, stitch.Stitch{
-		Containers: []stitch.Container{
-			{
-				ID:      "0b8a2ed7d14d78a388375025223b05d072bbaec3",
-				Image:   stitch.Image{Name: "alpine"},
-				Command: []string{"cat"},
-			},
-			{
-				ID:      "d1c9f501efd7a348e54388358c5fe29690fb147d",
-				Image:   stitch.Image{Name: "alpine"},
-				Command: []string{"cat"},
-			},
-		},
-		Labels: []stitch.Label{
-			{
-				Name: "a",
-				IDs: []string{
-					"0b8a2ed7d14d78a388375025223b05d072bbaec3",
-					"d1c9f501efd7a348e54388358c5fe29690fb147d",
+				Hostnames: []string{
+					"foo",
+					"bar",
 				},
 			},
 		},
@@ -163,15 +147,43 @@ func TestContainerTxn(t *testing.T) {
 	testContainerTxn(t, conn, stitch.Stitch{
 		Containers: []stitch.Container{
 			{
-				ID:    "018e4ee517d85640d9bf0adb4579d2ac9bd358af",
-				Image: stitch.Image{Name: "alpine"},
+				Hostname: "foo",
+				ID:       "0b8a2ed7d14d78a388375025223b05d072bbaec3",
+				Image:    stitch.Image{Name: "alpine"},
+				Command:  []string{"cat"},
+			},
+			{
+				Hostname: "bar",
+				ID:       "d1c9f501efd7a348e54388358c5fe29690fb147d",
+				Image:    stitch.Image{Name: "alpine"},
+				Command:  []string{"cat"},
 			},
 		},
-		Labels: []stitch.Label{
+		LoadBalancers: []stitch.LoadBalancer{
 			{
 				Name: "a",
-				IDs: []string{
-					"018e4ee517d85640d9bf0adb4579d2ac9bd358af",
+				Hostnames: []string{
+					"foo",
+					"bar",
+				},
+			},
+		},
+	})
+	assert.True(t, fired(trigg))
+
+	testContainerTxn(t, conn, stitch.Stitch{
+		Containers: []stitch.Container{
+			{
+				Hostname: "foo",
+				ID:       "018e4ee517d85640d9bf0adb4579d2ac9bd358af",
+				Image:    stitch.Image{Name: "alpine"},
+			},
+		},
+		LoadBalancers: []stitch.LoadBalancer{
+			{
+				Name: "a",
+				Hostnames: []string{
+					"foo",
 				},
 			},
 		},
@@ -181,32 +193,34 @@ func TestContainerTxn(t *testing.T) {
 	stc = stitch.Stitch{
 		Containers: []stitch.Container{
 			{
-				ID:    "018e4ee517d85640d9bf0adb4579d2ac9bd358af",
-				Image: stitch.Image{Name: "alpine"},
+				Hostname: "foo",
+				ID:       "018e4ee517d85640d9bf0adb4579d2ac9bd358af",
+				Image:    stitch.Image{Name: "alpine"},
 			},
 			{
-				ID:    "ac4693f0b7fc17aa0e885aa03dc8f7cd6017f496",
-				Image: stitch.Image{Name: "alpine"},
+				Hostname: "bar",
+				ID:       "ac4693f0b7fc17aa0e885aa03dc8f7cd6017f496",
+				Image:    stitch.Image{Name: "alpine"},
 			},
 		},
-		Labels: []stitch.Label{
+		LoadBalancers: []stitch.LoadBalancer{
 			{
 				Name: "b",
-				IDs: []string{
-					"018e4ee517d85640d9bf0adb4579d2ac9bd358af",
+				Hostnames: []string{
+					"foo",
 				},
 			},
 			{
 				Name: "c",
-				IDs: []string{
-					"ac4693f0b7fc17aa0e885aa03dc8f7cd6017f496",
+				Hostnames: []string{
+					"bar",
 				},
 			},
 			{
 				Name: "a",
-				IDs: []string{
-					"018e4ee517d85640d9bf0adb4579d2ac9bd358af",
-					"ac4693f0b7fc17aa0e885aa03dc8f7cd6017f496",
+				Hostnames: []string{
+					"foo",
+					"bar",
 				},
 			},
 		},
@@ -250,40 +264,6 @@ func TestConnectionTxn(t *testing.T) {
 	assert.False(t, fired(trigg))
 
 	stc := stitch.Stitch{
-		Containers: []stitch.Container{
-			{
-				ID:    "018e4ee517d85640d9bf0adb4579d2ac9bd358af",
-				Image: stitch.Image{Name: "alpine"},
-			},
-			{
-				ID:    "ac4693f0b7fc17aa0e885aa03dc8f7cd6017f496",
-				Image: stitch.Image{Name: "alpine"},
-			},
-			{
-				ID:    "6c1423bb4006da48cd36aa664afec85f05575702",
-				Image: stitch.Image{Name: "alpine"},
-			},
-		},
-		Labels: []stitch.Label{
-			{
-				Name: "a",
-				IDs: []string{
-					"018e4ee517d85640d9bf0adb4579d2ac9bd358af",
-				},
-			},
-			{
-				Name: "b",
-				IDs: []string{
-					"ac4693f0b7fc17aa0e885aa03dc8f7cd6017f496",
-				},
-			},
-			{
-				Name: "c",
-				IDs: []string{
-					"6c1423bb4006da48cd36aa664afec85f05575702",
-				},
-			},
-		},
 		Connections: []stitch.Connection{
 			{From: "a", To: "a", MinPort: 80, MaxPort: 80},
 		},
@@ -363,184 +343,102 @@ func fired(c chan struct{}) bool {
 func TestPlacementTxn(t *testing.T) {
 	conn := db.New()
 	checkPlacement := func(stc stitch.Stitch, exp ...db.Placement) {
-		placements := map[db.Placement]struct{}{}
+		var actual db.PlacementSlice
 		conn.Txn(db.AllTables...).Run(func(view db.Database) error {
 			updatePolicy(view, stc.String())
-			res := view.SelectFromPlacement(nil)
-
-			// Set the ID to 0 so that we can use reflect.DeepEqual.
-			for _, p := range res {
-				p.ID = 0
-				placements[p] = struct{}{}
-			}
-
+			actual = db.PlacementSlice(view.SelectFromPlacement(nil))
 			return nil
 		})
 
-		assert.Equal(t, len(exp), len(placements))
-		for _, p := range exp {
-			_, ok := placements[p]
-			assert.True(t, ok)
+		key := func(plcmIntf interface{}) interface{} {
+			plcm := plcmIntf.(db.Placement)
+			plcm.ID = 0 // Ignore the Database ID.
+
+			// If it's a container constraint, the order of TargetContainer
+			// and OtherContainer doesn't matter. Therefore, we sort the
+			// containers IDs so that the assignment is consistent.
+			if plcm.OtherContainer != "" {
+				ids := []string{plcm.TargetContainer, plcm.OtherContainer}
+				sort.Strings(ids)
+				plcm.TargetContainer = ids[0]
+				plcm.OtherContainer = ids[1]
+			}
+			return plcm
 		}
+		_, missing, extra := join.HashJoin(db.PlacementSlice(exp), actual,
+			key, key)
+		assert.Empty(t, missing)
+		assert.Empty(t, extra)
 	}
 
+	fooHostname := "foo"
+	barHostname := "bar"
+	bazHostname := "baz"
+	fooID := "fooID"
+	barID := "barID"
+	bazID := "bazID"
 	stc := stitch.Stitch{
 		Containers: []stitch.Container{
 			{
-				ID:    "1a84f87eebbf7dc7edda83a38f34a49f2116240b",
-				Image: stitch.Image{Name: "foo"},
+				Hostname: fooHostname,
+				ID:       fooID,
+				Image:    stitch.Image{Name: "foo"},
 			},
 			{
-				ID:    "1806739e57b7678db83f0a5c6c63b16325c54242",
-				Image: stitch.Image{Name: "bar"},
+				Hostname: barHostname,
+				ID:       barID,
+				Image:    stitch.Image{Name: "bar"},
 			},
 			{
-				ID:    "af771c5f8cd87c550263b011541cbf6a14051976",
-				Image: stitch.Image{Name: "bar"},
-			},
-		},
-		Labels: []stitch.Label{
-			{
-				Name: "foo",
-				IDs: []string{
-					"1a84f87eebbf7dc7edda83a38f34a49f2116240b",
-				},
-			},
-			{
-				Name: "bar",
-				IDs: []string{
-					"1806739e57b7678db83f0a5c6c63b16325c54242",
-				},
-			},
-			{
-				Name: "baz",
-				IDs: []string{
-					"af771c5f8cd87c550263b011541cbf6a14051976",
-				},
-			},
-		},
-		Placements: []stitch.Placement{
-			{
-				TargetLabel: "bar",
-				Exclusive:   true,
-				OtherLabel:  "foo",
+				Hostname: bazHostname,
+				ID:       bazID,
+				Image:    stitch.Image{Name: "baz"},
 			},
 		},
 	}
-
-	// Create an exclusive placement.
-	checkPlacement(stc,
-		db.Placement{
-			TargetLabel: "bar",
-			Exclusive:   true,
-			OtherLabel:  "foo",
-		},
-	)
-
-	// Change the placement from "exclusive" to "on".
-	stc.Placements = []stitch.Placement{
-		{TargetLabel: "bar", Exclusive: false, OtherLabel: "foo"},
-	}
-	checkPlacement(stc,
-		db.Placement{
-			TargetLabel: "bar",
-			Exclusive:   false,
-			OtherLabel:  "foo",
-		},
-	)
-
-	// Add another placement constraint.
-	stc.Placements = []stitch.Placement{
-		{TargetLabel: "bar", Exclusive: false, OtherLabel: "foo"},
-		{TargetLabel: "bar", Exclusive: true, OtherLabel: "bar"},
-	}
-	checkPlacement(stc,
-		db.Placement{
-			TargetLabel: "bar",
-			Exclusive:   false,
-			OtherLabel:  "foo",
-		},
-		db.Placement{
-			TargetLabel: "bar",
-			Exclusive:   true,
-			OtherLabel:  "bar",
-		},
-	)
 
 	// Machine placement
 	stc.Placements = []stitch.Placement{
-		{TargetLabel: "foo", Exclusive: false, Size: "m4.large"},
+		{TargetContainerID: "foo", Exclusive: false, Size: "m4.large"},
 	}
 	checkPlacement(stc,
 		db.Placement{
-			TargetLabel: "foo",
-			Exclusive:   false,
-			Size:        "m4.large",
+			TargetContainer: "foo",
+			Exclusive:       false,
+			Size:            "m4.large",
 		},
 	)
 
-	// XXX: Port placement belongs in Stitch unit tests.
 	// Port placement
 	stc.Placements = nil
 	stc.Connections = []stitch.Connection{
-		{From: stitch.PublicInternetLabel, To: "foo", MinPort: 80, MaxPort: 80},
-		{From: stitch.PublicInternetLabel, To: "foo", MinPort: 81, MaxPort: 81},
+		{From: stitch.PublicInternetLabel, To: fooHostname, MinPort: 80,
+			MaxPort: 80},
+		{From: stitch.PublicInternetLabel, To: fooHostname, MinPort: 81,
+			MaxPort: 81},
 	}
-	checkPlacement(stc,
-		db.Placement{
-			TargetLabel: "foo",
-			Exclusive:   true,
-			OtherLabel:  "foo",
-		},
-	)
+	checkPlacement(stc)
 
 	stc.Connections = []stitch.Connection{
-		{From: stitch.PublicInternetLabel, To: "foo", MinPort: 80, MaxPort: 80},
-		{From: stitch.PublicInternetLabel, To: "bar", MinPort: 80, MaxPort: 80},
-		{From: stitch.PublicInternetLabel, To: "bar", MinPort: 81, MaxPort: 81},
-		{From: stitch.PublicInternetLabel, To: "baz", MinPort: 81, MaxPort: 81},
+		{From: stitch.PublicInternetLabel, To: fooHostname, MinPort: 80,
+			MaxPort: 80},
+		{From: stitch.PublicInternetLabel, To: barHostname, MinPort: 80,
+			MaxPort: 80},
+		{From: stitch.PublicInternetLabel, To: barHostname, MinPort: 81,
+			MaxPort: 81},
+		{From: stitch.PublicInternetLabel, To: bazHostname, MinPort: 81,
+			MaxPort: 81},
 	}
 	checkPlacement(stc,
 		db.Placement{
-			TargetLabel: "foo",
-			Exclusive:   true,
-			OtherLabel:  "foo",
+			TargetContainer: fooID,
+			OtherContainer:  barID,
+			Exclusive:       true,
 		},
-
 		db.Placement{
-			TargetLabel: "bar",
-			Exclusive:   true,
-			OtherLabel:  "bar",
-		},
-
-		db.Placement{
-			TargetLabel: "foo",
-			Exclusive:   true,
-			OtherLabel:  "bar",
-		},
-
-		db.Placement{
-			TargetLabel: "bar",
-			Exclusive:   true,
-			OtherLabel:  "foo",
-		},
-
-		db.Placement{
-			TargetLabel: "baz",
-			Exclusive:   true,
-			OtherLabel:  "baz",
-		},
-
-		db.Placement{
-			TargetLabel: "bar",
-			Exclusive:   true,
-			OtherLabel:  "baz",
-		},
-
-		db.Placement{
-			TargetLabel: "baz",
-			Exclusive:   true,
-			OtherLabel:  "bar",
+			TargetContainer: barID,
+			OtherContainer:  bazID,
+			Exclusive:       true,
 		},
 	)
 }
@@ -575,14 +473,6 @@ func TestImageTxn(t *testing.T) {
 				Image: stitch.Image{Name: "image"},
 			},
 		},
-		Labels: []stitch.Label{
-			{
-				Name: "foo",
-				IDs: []string{
-					"475c40d6070969839ba0f88f7a9bd0cc7936aa30",
-				},
-			},
-		},
 	})
 
 	conn := db.New()
@@ -603,32 +493,6 @@ func TestImageTxn(t *testing.T) {
 			{
 				ID:    "133c61c61ef4b49ea26717efe0f0468d455fd317",
 				Image: stitch.Image{Name: "c"},
-			},
-		},
-		Labels: []stitch.Label{
-			{
-				Name: "foo",
-				IDs: []string{
-					"96189e4ea36c80171fd842ccc4c3438d06061991",
-				},
-			},
-			{
-				Name: "foo2",
-				IDs: []string{
-					"c51d206a1414f1fadf5020e5db35feee91410f79",
-				},
-			},
-			{
-				Name: "foo3",
-				IDs: []string{
-					"ede1e03efba48e66be3e51aabe03ec77d9f9def9",
-				},
-			},
-			{
-				Name: "foo4",
-				IDs: []string{
-					"133c61c61ef4b49ea26717efe0f0468d455fd317",
-				},
 			},
 		},
 	},
@@ -662,19 +526,6 @@ func TestImageTxn(t *testing.T) {
 				Image: stitch.Image{Name: "b", Dockerfile: "2"},
 			},
 		},
-		Labels: []stitch.Label{
-			{
-				Name: "foo",
-				IDs: []string{
-					"96189e4ea36c80171fd842ccc4c3438d06061991",
-				},
-			}, {
-				Name: "foo2",
-				IDs: []string{
-					"18c2c81fb48a2a481af58ba5ad6da0e2b244f060",
-				},
-			},
-		},
 	},
 		db.Image{
 			Name:       "a",
@@ -686,4 +537,90 @@ func TestImageTxn(t *testing.T) {
 			Dockerfile: "2",
 		},
 	)
+}
+
+func checkLoadBalancer(t *testing.T, conn db.Conn, stc stitch.Stitch,
+	exp ...db.LoadBalancer) {
+	var loadBalancers []db.LoadBalancer
+	conn.Txn(db.AllTables...).Run(func(view db.Database) error {
+		updatePolicy(view, stc.String())
+		loadBalancers = view.SelectFromLoadBalancer(nil)
+		return nil
+	})
+
+	key := func(intf interface{}) interface{} {
+		lb := intf.(db.LoadBalancer)
+		return struct {
+			Name, IP, Hostnames string
+		}{
+			lb.Name, lb.IP, fmt.Sprintf("%+v", lb.Hostnames),
+		}
+	}
+	_, lonelyLeft, lonelyRight := join.HashJoin(
+		db.LoadBalancerSlice(loadBalancers), db.LoadBalancerSlice(exp), key, key)
+	assert.Empty(t, lonelyLeft, "unexpected load balancers")
+	assert.Empty(t, lonelyRight, "missing load balancers")
+}
+
+func TestLoadBalancerTxn(t *testing.T) {
+	t.Parallel()
+	conn := db.New()
+
+	loadBalancerA := "loadBalancerA"
+	loadBalancerAIP := "8.8.8.8"
+	hostnamesA := []string{"a", "aa"}
+
+	// Insert a load balancer into an empty db.
+	checkLoadBalancer(t, conn, stitch.Stitch{
+		LoadBalancers: []stitch.LoadBalancer{
+			{
+				Name:      loadBalancerA,
+				Hostnames: hostnamesA,
+			},
+		},
+	}, db.LoadBalancer{
+		Name:      loadBalancerA,
+		Hostnames: hostnamesA,
+	})
+
+	// Simulate allocating an IP to the load balancer. Ensure it doesn't get
+	// overwritten in the join.
+	conn.Txn(db.LoadBalancerTable).Run(func(view db.Database) error {
+		lb := view.SelectFromLoadBalancer(func(lb db.LoadBalancer) bool {
+			return lb.Name == loadBalancerA
+		})[0]
+		lb.IP = loadBalancerAIP
+		view.Commit(lb)
+		return nil
+	})
+
+	hostnamesANew := []string{"a", "aa", "aaa"}
+	checkLoadBalancer(t, conn, stitch.Stitch{
+		LoadBalancers: []stitch.LoadBalancer{
+			{
+				Name:      loadBalancerA,
+				Hostnames: hostnamesANew,
+			},
+		},
+	}, db.LoadBalancer{
+		Name:      loadBalancerA,
+		Hostnames: hostnamesANew,
+		IP:        loadBalancerAIP,
+	})
+
+	// Change the deployment so that the current load balancer is removed, and a
+	// different one is inserted.
+	loadBalancerB := "loadBalancerB"
+	hostnamesB := []string{"b", "bb"}
+	checkLoadBalancer(t, conn, stitch.Stitch{
+		LoadBalancers: []stitch.LoadBalancer{
+			{
+				Name:      loadBalancerB,
+				Hostnames: hostnamesB,
+			},
+		},
+	}, db.LoadBalancer{
+		Name:      loadBalancerB,
+		Hostnames: hostnamesB,
+	})
 }

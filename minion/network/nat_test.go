@@ -14,6 +14,8 @@ import (
 	"github.com/quilt/quilt/db"
 	"github.com/quilt/quilt/minion/ipdef"
 	"github.com/quilt/quilt/minion/network/mocks"
+	"github.com/quilt/quilt/minion/nl"
+	"github.com/quilt/quilt/minion/nl/nlmock"
 	"github.com/quilt/quilt/stitch"
 )
 
@@ -21,28 +23,31 @@ func TestUpdateNATErrors(t *testing.T) {
 	ipt := &mocks.IPTables{}
 	anErr := errors.New("err")
 
-	getPublicInterface = func() (string, error) {
+	getDefaultRouteIntf = func() (string, error) {
 		return "", anErr
 	}
-	assert.NotNil(t, updateNAT(ipt, nil, nil))
+	assert.NotNil(t, updateNAT(ipt, nil, nil, "", ""))
 
 	ipt = &mocks.IPTables{}
-	ipt.On("AppendUnique", mock.Anything, mock.Anything, mock.Anything).Return(anErr)
-	getPublicInterface = func() (string, error) {
+	ipt.On("AppendUnique", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything).Return(anErr)
+	getDefaultRouteIntf = func() (string, error) {
 		return "eth0", nil
 	}
-	assert.NotNil(t, updateNAT(ipt, nil, nil))
+	assert.NotNil(t, updateNAT(ipt, nil, nil, "", ""))
 
 	ipt = &mocks.IPTables{}
-	ipt.On("AppendUnique", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	ipt.On("AppendUnique", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything).Return(nil)
 	ipt.On("List", mock.Anything, mock.Anything).Return(nil, anErr)
-	assert.NotNil(t, updateNAT(ipt, nil, nil))
+	assert.NotNil(t, updateNAT(ipt, nil, nil, "", ""))
 
 	ipt = &mocks.IPTables{}
-	ipt.On("AppendUnique", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	ipt.On("AppendUnique", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything).Return(nil)
 	ipt.On("List", "nat", "PREROUTING").Return(nil, nil)
 	ipt.On("List", "nat", "POSTROUTING").Return(nil, anErr)
-	assert.NotNil(t, updateNAT(ipt, nil, nil))
+	assert.NotNil(t, updateNAT(ipt, nil, nil, "", ""))
 }
 
 func TestPreroutingRules(t *testing.T) {
@@ -50,16 +55,12 @@ func TestPreroutingRules(t *testing.T) {
 
 	containers := []db.Container{
 		{
-			IP:     "8.8.8.8",
-			Labels: []string{"red", "blue"},
+			IP:       "8.8.8.8",
+			Hostname: "red",
 		},
 		{
-			IP:     "9.9.9.9",
-			Labels: []string{"purple"},
-		},
-		{
-			IP:     "10.10.10.10",
-			Labels: []string{"green"},
+			IP:       "9.9.9.9",
+			Hostname: "purple",
 		},
 	}
 
@@ -71,18 +72,8 @@ func TestPreroutingRules(t *testing.T) {
 		},
 		{
 			From:    stitch.PublicInternetLabel,
-			To:      "blue",
-			MinPort: 81,
-		},
-		{
-			From:    stitch.PublicInternetLabel,
 			To:      "purple",
-			MinPort: 80,
-		},
-		{
-			From:    "green",
-			To:      stitch.PublicInternetLabel,
-			MinPort: 80,
+			MinPort: 81,
 		},
 		{
 			From:    "yellow",
@@ -95,10 +86,8 @@ func TestPreroutingRules(t *testing.T) {
 	exp := []string{
 		"-i eth0 -p tcp -m tcp --dport 80 -j DNAT --to-destination 8.8.8.8:80",
 		"-i eth0 -p udp -m udp --dport 80 -j DNAT --to-destination 8.8.8.8:80",
-		"-i eth0 -p tcp -m tcp --dport 81 -j DNAT --to-destination 8.8.8.8:81",
-		"-i eth0 -p udp -m udp --dport 81 -j DNAT --to-destination 8.8.8.8:81",
-		"-i eth0 -p tcp -m tcp --dport 80 -j DNAT --to-destination 9.9.9.9:80",
-		"-i eth0 -p udp -m udp --dport 80 -j DNAT --to-destination 9.9.9.9:80",
+		"-i eth0 -p tcp -m tcp --dport 81 -j DNAT --to-destination 9.9.9.9:81",
+		"-i eth0 -p udp -m udp --dport 81 -j DNAT --to-destination 9.9.9.9:81",
 	}
 	assert.Equal(t, exp, actual)
 }
@@ -108,16 +97,12 @@ func TestPostroutingRules(t *testing.T) {
 
 	containers := []db.Container{
 		{
-			IP:     "8.8.8.8",
-			Labels: []string{"red", "blue"},
+			IP:       "8.8.8.8",
+			Hostname: "red",
 		},
 		{
-			IP:     "9.9.9.9",
-			Labels: []string{"purple"},
-		},
-		{
-			IP:     "10.10.10.10",
-			Labels: []string{"green"},
+			IP:       "9.9.9.9",
+			Hostname: "purple",
 		},
 	}
 
@@ -128,40 +113,16 @@ func TestPostroutingRules(t *testing.T) {
 			MinPort: 80,
 		},
 		{
-			From:    "blue",
-			To:      stitch.PublicInternetLabel,
-			MinPort: 81,
-		},
-		{
-			From:    "purple",
-			To:      stitch.PublicInternetLabel,
-			MinPort: 80,
-		},
-		{
 			From:    "purple",
 			To:      stitch.PublicInternetLabel,
 			MinPort: 81,
-		},
-		{
-			From:    stitch.PublicInternetLabel,
-			To:      "green",
-			MinPort: 80,
-		},
-		{
-			From:    "yellow",
-			To:      stitch.PublicInternetLabel,
-			MinPort: 80,
 		},
 	}
 
 	exp := []string{
 		"-s 8.8.8.8/32 -p tcp -m tcp --dport 80 -o eth0 -j MASQUERADE",
-		"-s 8.8.8.8/32 -p tcp -m tcp --dport 81 -o eth0 -j MASQUERADE",
 		"-s 8.8.8.8/32 -p udp -m udp --dport 80 -o eth0 -j MASQUERADE",
-		"-s 8.8.8.8/32 -p udp -m udp --dport 81 -o eth0 -j MASQUERADE",
-		"-s 9.9.9.9/32 -p tcp -m tcp --dport 80 -o eth0 -j MASQUERADE",
 		"-s 9.9.9.9/32 -p tcp -m tcp --dport 81 -o eth0 -j MASQUERADE",
-		"-s 9.9.9.9/32 -p udp -m udp --dport 80 -o eth0 -j MASQUERADE",
 		"-s 9.9.9.9/32 -p udp -m udp --dport 81 -o eth0 -j MASQUERADE",
 	}
 	actual := postroutingRules("eth0", containers, connections)
@@ -199,10 +160,10 @@ func TestSyncChain(t *testing.T) {
 		"-A PREROUTING -i eth0 -j DNAT --to-destination 8.8.8.8:80",
 	}, nil)
 	ipt.On("Delete", "nat", "PREROUTING",
-		[]string{"-i", "eth0", "-j", "DNAT", "--to-destination", "7.7.7.7:80"},
+		"-i", "eth0", "-j", "DNAT", "--to-destination", "7.7.7.7:80",
 	).Return(nil)
 	ipt.On("Append", "nat", "PREROUTING",
-		[]string{"-i", "eth0", "-j", "DNAT", "--to-destination", "9.9.9.9:80"},
+		"-i", "eth0", "-j", "DNAT", "--to-destination", "9.9.9.9:80",
 	).Return(nil)
 	err := syncChain(ipt, "nat", "PREROUTING", []string{
 		"-i eth0 -j DNAT --to-destination 8.8.8.8:80",
@@ -264,43 +225,57 @@ func TestRuleKey(t *testing.T) {
 	assert.Nil(t, ruleKey("malformed"))
 }
 
-func TestGetPublicInterface(t *testing.T) {
-	routeList = func(link netlink.Link, family int) ([]netlink.Route, error) {
-		return nil, errors.New("not implemented")
-	}
-	linkByIndex = func(index int) (netlink.Link, error) {
-		if index == 5 {
-			link := netlink.GenericLink{}
-			link.LinkAttrs.Name = "link name"
-			return &link, nil
-		}
-		return nil, errors.New("unknown")
-	}
+func TestGetDefaultRouteIntf(t *testing.T) {
+	mockNetlink := new(nlmock.I)
+	nl.N = mockNetlink
+	mockNetlink.On("RouteList", mock.Anything).Once().Return(
+		nil, errors.New("not implemented"))
 
-	res, err := getPublicInterfaceImpl()
+	link := netlink.GenericLink{}
+	link.LinkAttrs.Name = "link name"
+	mockNetlink.On("LinkByIndex", 5).Return(&link, nil)
+	mockNetlink.On("LinkByIndex", 2).Return(nil, errors.New("unknown"))
+
+	res, err := getDefaultRouteIntfImpl()
 	assert.Empty(t, res)
 	assert.EqualError(t, err, "route list: not implemented")
 
-	var routes []netlink.Route
-	routeList = func(link netlink.Link, family int) ([]netlink.Route, error) {
-		return routes, nil
-	}
-	res, err = getPublicInterfaceImpl()
+	mockNetlink.On("RouteList", mock.Anything).Once().Return(nil, nil)
+	res, err = getDefaultRouteIntfImpl()
 	assert.Empty(t, res)
 	assert.EqualError(t, err, "missing default route")
 
-	routes = []netlink.Route{{Dst: &ipdef.QuiltSubnet}}
-	res, err = getPublicInterfaceImpl()
+	mockNetlink.On("RouteList", mock.Anything).Once().Return(
+		[]nl.Route{{Dst: &ipdef.QuiltSubnet}}, nil)
+	res, err = getDefaultRouteIntfImpl()
 	assert.Empty(t, res)
 	assert.EqualError(t, err, "missing default route")
 
-	routes = []netlink.Route{{LinkIndex: 2}}
-	res, err = getPublicInterfaceImpl()
+	mockNetlink.On("RouteList", mock.Anything).Once().Return(
+		[]nl.Route{{LinkIndex: 2}}, nil)
+	res, err = getDefaultRouteIntfImpl()
 	assert.Empty(t, res)
 	assert.EqualError(t, err, "default route missing interface: unknown")
 
-	routes = []netlink.Route{{LinkIndex: 5}}
-	res, err = getPublicInterfaceImpl()
+	mockNetlink.On("RouteList", mock.Anything).Once().Return(
+		[]nl.Route{{LinkIndex: 5}}, nil)
+	res, err = getDefaultRouteIntfImpl()
 	assert.Equal(t, "link name", res)
 	assert.NoError(t, err)
+}
+
+func TestPickIntfs(t *testing.T) {
+	getDefaultRouteIntf = func() (string, error) {
+		return "default", nil
+	}
+
+	resInbound, resOutbound, err := pickIntfs("inbound", "outbound")
+	assert.NoError(t, err)
+	assert.Equal(t, "inbound", resInbound)
+	assert.Equal(t, "outbound", resOutbound)
+
+	resInbound, resOutbound, err = pickIntfs("inbound", "")
+	assert.NoError(t, err)
+	assert.Equal(t, "inbound", resInbound)
+	assert.Equal(t, "default", resOutbound)
 }

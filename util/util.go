@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -63,7 +64,7 @@ func ToTar(name string, permissions int, content string) (io.Reader, error) {
 }
 
 // MyIP gets the local systems Public IP address as visible on the WAN by querying an
-// exeternal service.
+// external service.
 func MyIP() (string, error) {
 	return httpRequest("http://checkip.amazonaws.com/")
 }
@@ -190,9 +191,11 @@ var After = func(t time.Time) bool {
 	return time.Now().After(t)
 }
 
-// WaitFor waits until `pred` is satisfied, or `timeout` Duration has passed, checking
-// at every `interval`.
-func WaitFor(pred func() bool, interval time.Duration, timeout time.Duration) error {
+// BackoffWaitFor waits until `pred` is satisfied, or `timeout` Duration has
+// passed. Every time the predicate fails, double the sleep interval until
+// `cap` is reached.
+func BackoffWaitFor(pred func() bool, cap time.Duration, timeout time.Duration) error {
+	interval := 1 * time.Second
 	deadline := time.Now().Add(timeout)
 	for {
 		if pred() {
@@ -202,5 +205,39 @@ func WaitFor(pred func() bool, interval time.Duration, timeout time.Duration) er
 			return errors.New("timed out")
 		}
 		Sleep(interval)
+		interval *= 2
 	}
+}
+
+// PrintUsageString formats and prints usage strings for cli commands.
+func PrintUsageString(commands string, explanation string, flags *flag.FlagSet) {
+	fmt.Println("\nUsage: " + commands + "\n\n" + explanation + "\n")
+	fmt.Println("Options:")
+	if flags != nil {
+		flags.PrintDefaults()
+	} else {
+		flag.PrintDefaults()
+	}
+}
+
+// JoinNotifiers merges two notifications channels, `a` and `b`.  The returned channel
+// will notify if one or more notifications have occurred on `a` or `b` since the last
+// time it was checked.
+func JoinNotifiers(a, b chan struct{}) chan struct{} {
+	c := make(chan struct{}, 1)
+	go func() {
+		c <- struct{}{}
+		for {
+			select {
+			case <-a:
+			case <-b:
+			}
+
+			select {
+			case c <- struct{}{}:
+			default: // There's a notification in queue, no need for another.
+			}
+		}
+	}()
+	return c
 }

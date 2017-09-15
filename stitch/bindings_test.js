@@ -1,655 +1,753 @@
+/* eslint-env mocha */
+
+/* eslint-disable import/no-extraneous-dependencies */
 const chai = require('chai');
 const chaiSubset = require('chai-subset');
 const {
-    Assertion,
-    Container,
-    Deployment,
-    Image,
-    LabelRule,
-    Machine,
-    MachineRule,
-    Port,
-    PortRange,
-    Range,
-    Service,
-    createDeployment,
-    getDeployment,
-    githubKeys,
-    publicInternet,
-    resetGlobals,
+  Container,
+  Image,
+  Machine,
+  Port,
+  PortRange,
+  Range,
+  LoadBalancer,
+  allow,
+  createDeployment,
+  publicInternet,
+  resetGlobals,
+  baseInfrastructure,
 } = require('./bindings.js');
 
 chai.use(chaiSubset);
 const { expect } = chai;
 
-describe('Bindings', function () {
-    let deployment;
-    beforeEach(function () {
-        resetGlobals();
-        deployment = createDeployment();
+describe('Bindings', () => {
+  let deployment;
+  beforeEach(() => {
+    resetGlobals();
+    deployment = createDeployment();
+  });
+
+  const checkMachines = function checkMachines(expected) {
+    const { machines } = deployment.toQuiltRepresentation();
+    expect(machines).to.have.lengthOf(expected.length)
+      .and.containSubset(expected);
+  };
+
+  const checkContainers = function checkContainers(expected) {
+    const { containers } = deployment.toQuiltRepresentation();
+    expect(containers).to.have.lengthOf(expected.length)
+      .and.containSubset(expected);
+  };
+
+  const checkPlacements = function checkPlacements(expected) {
+    const { placements } = deployment.toQuiltRepresentation();
+    expect(placements).to.have.lengthOf(expected.length)
+      .and.containSubset(expected);
+  };
+
+  const checkLoadBalancers = function checkLoadBalancers(expected) {
+    const { loadBalancers } = deployment.toQuiltRepresentation();
+    expect(loadBalancers).to.have.lengthOf(expected.length)
+      .and.containSubset(expected);
+  };
+
+  const checkConnections = function checkConnections(expected) {
+    const { connections } = deployment.toQuiltRepresentation();
+    expect(connections).to.have.lengthOf(expected.length)
+      .and.containSubset(expected);
+  };
+
+  describe('Machine', () => {
+    it('basic', () => {
+      deployment.deploy([new Machine({
+        role: 'Worker',
+        provider: 'Amazon',
+        region: 'us-west-2',
+        size: 'm4.large',
+        cpu: new Range(2, 4),
+        ram: new Range(4, 8),
+        diskSize: 32,
+        sshKeys: ['key1', 'key2'],
+      })]);
+      checkMachines([{
+        id: 'ae657514e0aa41ed95d9e27c3f3c9b2ff23bd05e',
+        role: 'Worker',
+        provider: 'Amazon',
+        region: 'us-west-2',
+        size: 'm4.large',
+        cpu: new Range(2, 4),
+        ram: new Range(4, 8),
+        diskSize: 32,
+        sshKeys: ['key1', 'key2'],
+      }]);
+    });
+    it('errors when passed invalid optional arguments', () => {
+      expect(() => new Machine({ badArg: 'foo' })).to
+        .throw('Unrecognized keys passed to Machine constructor: badArg');
+      expect(() => new Machine({
+        badArg: 'foo', provider: 'Amazon', alsoBad: 'bar' }))
+        .to.throw('Unrecognized keys passed to Machine constructor: ');
+    });
+    it('hash independent of SSH keys', () => {
+      deployment.deploy([new Machine({
+        role: 'Worker',
+        provider: 'Amazon',
+        region: 'us-west-2',
+        size: 'm4.large',
+        cpu: new Range(2, 4),
+        ram: new Range(4, 8),
+        diskSize: 32,
+        sshKeys: ['key3'],
+      })]);
+      checkMachines([{
+        id: 'ae657514e0aa41ed95d9e27c3f3c9b2ff23bd05e',
+        role: 'Worker',
+        provider: 'Amazon',
+        region: 'us-west-2',
+        size: 'm4.large',
+        cpu: new Range(2, 4),
+        ram: new Range(4, 8),
+        diskSize: 32,
+        sshKeys: ['key3'],
+      }]);
+    });
+    it('replicate', () => {
+      const baseMachine = new Machine({ provider: 'Amazon' });
+      deployment.deploy(baseMachine.asMaster().replicate(2));
+      checkMachines([
+        {
+          id: '38f289007e41382ce4e2773508609674bac7df52',
+          role: 'Master',
+          provider: 'Amazon',
+        },
+        {
+          id: 'e23719b2160e4b42c6bbca72567220833fac68da',
+          role: 'Master',
+          provider: 'Amazon',
+        },
+      ]);
+    });
+    it('replicate independent', () => {
+      const baseMachine = new Machine({ provider: 'Amazon' });
+      const machines = baseMachine.asMaster().replicate(2);
+      machines[0].sshKeys.push('key');
+      deployment.deploy(machines);
+      checkMachines([
+        {
+          id: '38f289007e41382ce4e2773508609674bac7df52',
+          role: 'Master',
+          provider: 'Amazon',
+          sshKeys: ['key'],
+        },
+        {
+          id: 'e23719b2160e4b42c6bbca72567220833fac68da',
+          role: 'Master',
+          provider: 'Amazon',
+        },
+      ]);
+    });
+    it('set floating IP', () => {
+      const baseMachine = new Machine({
+        provider: 'Amazon',
+        floatingIp: 'xxx.xxx.xxx.xxx',
+      });
+      deployment.deploy(baseMachine.asMaster());
+      checkMachines([{
+        id: 'bc2c5392f98b605e90007056e580a42c0c3f960d',
+        role: 'Master',
+        provider: 'Amazon',
+        floatingIp: 'xxx.xxx.xxx.xxx',
+        sshKeys: [],
+      }]);
+    });
+    it('preemptible attribute', () => {
+      deployment.deploy(new Machine({
+        provider: 'Amazon',
+        preemptible: true,
+      }).asMaster());
+      checkMachines([{
+        id: '893cfbfaccf6aa6e518f1757dadb07ffb936082f',
+        role: 'Master',
+        provider: 'Amazon',
+        preemptible: true,
+      }]);
+    });
+  });
+
+  describe('Container', () => {
+    it('basic', () => {
+      deployment.deploy(new Container('host', 'image'));
+      checkContainers([{
+        id: '293fc7ad8a799d3cf2619a3db7124b0459f395cb',
+        image: new Image('image'),
+        hostname: 'host',
+        command: [],
+        env: {},
+        filepathToContent: {},
+      }]);
+    });
+    it('errors when passed invalid optional arguments', () => {
+      expect(() => new Container('host', 'image', { badArg: 'foo' })).to
+        .throw('Unrecognized keys passed to Container constructor: badArg');
+      expect(() => new Container('host', 'image',
+        { badArg: 'foo', command: [], alsoBad: 'bar' }))
+        .to.throw('Unrecognized keys passed to Container constructor: ');
+    });
+    it('containers are not duplicated', () => {
+      const container = new Container('host', 'image');
+      deployment.deploy([container, container]);
+      checkContainers([{
+        id: '293fc7ad8a799d3cf2619a3db7124b0459f395cb',
+        image: new Image('image'),
+        hostname: 'host',
+        command: [],
+        env: {},
+        filepathToContent: {},
+      }]);
+    });
+    it('command', () => {
+      deployment.deploy(new Container('host', 'image', {
+        command: ['arg1', 'arg2'],
+      }));
+      checkContainers([{
+        id: '9d0d496d49bed06e7c76c2b536d7520ccc1717f2',
+        image: new Image('image'),
+        command: ['arg1', 'arg2'],
+        hostname: 'host',
+        env: {},
+        filepathToContent: {},
+      }]);
+    });
+    it('env', () => {
+      const c = new Container('host', 'image');
+      c.env.foo = 'bar';
+      deployment.deploy(c);
+      checkContainers([{
+        id: '299619d3fb4b89fd5cc822983bc3fbcced2f0a98',
+        image: new Image('image'),
+        command: [],
+        env: { foo: 'bar' },
+        hostname: 'host',
+        filepathToContent: {},
+      }]);
+    });
+    it('hostname', () => {
+      const c = new Container('host', new Image('image'));
+      deployment.deploy(c);
+      expect(c.getHostname()).to.equal('host.q');
+      checkContainers([{
+        id: '293fc7ad8a799d3cf2619a3db7124b0459f395cb',
+        image: new Image('image'),
+        command: [],
+        env: {},
+        filepathToContent: {},
+        hostname: 'host',
+      }]);
+    });
+    it('repeated hostnames don\'t conflict', () => {
+      const a = new Container('host', 'image');
+      const b = new Container('host', 'image');
+      deployment.deploy([a, b]);
+      checkContainers([{
+        id: '293fc7ad8a799d3cf2619a3db7124b0459f395cb',
+        image: new Image('image'),
+        command: [],
+        env: {},
+        filepathToContent: {},
+        hostname: 'host',
+      }, {
+        id: '968bcf8c6d235afbc88aec8e1bdddc506714a0b8',
+        image: new Image('image'),
+        command: [],
+        env: {},
+        filepathToContent: {},
+        hostname: 'host2',
+      }]);
+    });
+    it('Container.hostname and LoadBalancer.hostname don\'t conflict', () => {
+      const container = new Container('foo', 'image');
+      const serv = new LoadBalancer('foo', []);
+      expect(container.getHostname()).to.equal('foo.q');
+      expect(serv.hostname()).to.equal('foo2.q');
+    });
+    it('hostnames returned by uniqueHostname cannot be reused', () => {
+      const containerA = new Container('host', 'ignoreme');
+      const containerB = new Container('host', 'ignoreme');
+      const containerC = new Container('host2', 'ignoreme');
+      const hostnames = [containerA, containerB, containerC]
+        .map(c => c.getHostname());
+      const hostnameSet = new Set(hostnames);
+      expect(hostnames.length).to.equal(hostnameSet.size);
+    });
+    it('clone increments existing index if one exists', () => {
+      const containerA = new Container('host', 'ignoreme');
+      const containerB = containerA.clone();
+      const containerC = containerB.clone();
+      expect(containerA.getHostname()).to.equal('host.q');
+      expect(containerB.getHostname()).to.equal('host2.q');
+      expect(containerC.getHostname()).to.equal('host3.q');
+    });
+    it('duplicate hostname causes error', () => {
+      const a = new Container('host', 'image');
+      a.hostname = 'host';
+      const b = new Container('host', 'image');
+      b.hostname = 'host';
+      deployment.deploy([a, b]);
+      expect(() => deployment.toQuiltRepresentation()).to
+        .throw('hostname "host" used multiple times');
+    });
+    it('image dockerfile', () => {
+      const c = new Container('host', new Image('name', 'dockerfile'));
+      deployment.deploy(c);
+      checkContainers([{
+        id: 'fbc9aedb5af0039b8cf09bca2ef5771467b44085',
+        image: new Image('name', 'dockerfile'),
+        hostname: 'host',
+        command: [],
+        env: {},
+        filepathToContent: {},
+      }]);
+    });
+    it('replicate', () => {
+      deployment.deploy(new Container('host', 'image', {
+        command: ['arg'],
+      }).replicate(2));
+      checkContainers([
+        {
+          id: 'aaf63faa86e552ec4ca75ab66e1b14a5993fa29d',
+          image: new Image('image'),
+          command: ['arg'],
+          hostname: 'host2',
+          env: {},
+          filepathToContent: {},
+        },
+        {
+          id: '339b2dafcb9fd3c17f01930b5c4782e8d7a9c1b8',
+          image: new Image('image'),
+          command: ['arg'],
+          hostname: 'host3',
+          env: {},
+          filepathToContent: {},
+        },
+      ]);
+    });
+    it('replicate independent', () => {
+      const repl = new Container('host', 'image', {
+        command: ['arg'],
+      }).replicate(2);
+      repl[0].env.foo = 'bar';
+      repl[0].command.push('changed');
+      deployment.deploy(repl);
+      checkContainers([
+        {
+          id: '339b2dafcb9fd3c17f01930b5c4782e8d7a9c1b8',
+          image: new Image('image'),
+          command: ['arg'],
+          hostname: 'host3',
+          env: {},
+          filepathToContent: {},
+        },
+        {
+          id: 'b318fc1c08ee0a8d74d99f8023112f323268e479',
+          image: new Image('image'),
+          command: ['arg', 'changed'],
+          env: { foo: 'bar' },
+          hostname: 'host2',
+          filepathToContent: {},
+        },
+      ]);
+    });
+  });
+
+  describe('Container attributes', () => {
+    const hostname = 'host';
+    const image = new Image('image');
+    const command = ['arg1', 'arg2'];
+    const env = { foo: 'bar' };
+    const filepathToContent = { qux: 'quuz' };
+    it('with*', () => {
+      // The stitch ID is different than the Container created with the
+      // constructor because the hostname ID increases with each with*
+      // call.
+      const id = 'f5c3e0fa3843e6fa149289d476f507831a45654d';
+      deployment.deploy(new Container(hostname, image, {
+        command,
+      }).withEnv(env)
+        .withFiles(filepathToContent));
+      checkContainers([{
+        id,
+        image,
+        command,
+        env,
+        filepathToContent,
+        hostname: 'host3',
+      }]);
+    });
+    it('constructor', () => {
+      const id = '9f9d0c0868163eda5b4ad5861c9558f055508959';
+      deployment.deploy(new Container(hostname, image, {
+        command, env, filepathToContent,
+      }));
+      checkContainers([{
+        id, hostname, image, command, env, filepathToContent,
+      }]);
+    });
+  });
+
+  describe('Placement', () => {
+    let target;
+    beforeEach(() => {
+      target = new Container('host', 'image');
+      deployment.deploy(target);
+    });
+    it('MachineRule size, region, provider', () => {
+      target.placeOn({
+        size: 'm4.large',
+        region: 'us-west-2',
+        provider: 'Amazon',
+      });
+      checkPlacements([{
+        targetContainerID: '293fc7ad8a799d3cf2619a3db7124b0459f395cb',
+        exclusive: false,
+        region: 'us-west-2',
+        provider: 'Amazon',
+        size: 'm4.large',
+      }]);
+    });
+    it('MachineRule size, provider', () => {
+      target.placeOn({
+        size: 'm4.large',
+        provider: 'Amazon',
+      });
+      checkPlacements([{
+        targetContainerID: '293fc7ad8a799d3cf2619a3db7124b0459f395cb',
+        exclusive: false,
+        provider: 'Amazon',
+        size: 'm4.large',
+      }]);
+    });
+    it('MachineRule floatingIp', () => {
+      target.placeOn({
+        floatingIp: 'xxx.xxx.xxx.xxx',
+      });
+      checkPlacements([{
+        targetContainerID: '293fc7ad8a799d3cf2619a3db7124b0459f395cb',
+        exclusive: false,
+        floatingIp: 'xxx.xxx.xxx.xxx',
+      }]);
+    });
+  });
+  describe('LoadBalancer', () => {
+    it('basic', () => {
+      deployment.deploy(
+        new LoadBalancer('web_tier', [new Container('host', 'nginx')]));
+      checkLoadBalancers([{
+        name: 'web_tier',
+        hostnames: ['host'],
+      }]);
+    });
+    it('multiple containers', () => {
+      deployment.deploy(new LoadBalancer('web_tier', [
+        new Container('host', 'nginx'),
+        new Container('host', 'nginx'),
+      ]));
+      checkLoadBalancers([{
+        name: 'web_tier',
+        hostnames: [
+          'host',
+          'host2',
+        ],
+      }]);
+    });
+    it('duplicate load balancers', () => {
+      /* Conflicting load balancer names.  We need to generate a couple of dummy
+               containers so that the two deployed containers have _refID's
+               that are sorted differently lexicographically and numerically. */
+      for (let i = 0; i < 2; i += 1) {
+        new Container('host', 'image'); // eslint-disable-line no-new
+      }
+      deployment.deploy(new LoadBalancer('foo', [
+        new Container('host', 'image')]));
+      for (let i = 0; i < 7; i += 1) {
+        new Container('host', 'image'); // eslint-disable-line no-new
+      }
+      deployment.deploy(new LoadBalancer('foo', [
+        new Container('host', 'image')]));
+      checkLoadBalancers([
+        {
+          name: 'foo',
+          hostnames: ['host3'],
+        },
+        {
+          name: 'foo2',
+          hostnames: ['host11'],
+        },
+      ]);
+    });
+    it('get LoadBalancer hostname', () => {
+      const foo = new LoadBalancer('foo', []);
+      expect(foo.hostname()).to.equal('foo.q');
+    });
+  });
+  describe('AllowFrom', () => {
+    let foo;
+    let bar;
+    let fooLoadBalancer;
+    beforeEach(() => {
+      foo = new Container('foo', 'image');
+      fooLoadBalancer = new LoadBalancer('fooLoadBalancer', [foo]);
+      bar = new Container('bar', 'image');
+      deployment.deploy([foo, bar, fooLoadBalancer]);
+    });
+    it('autobox port ranges', () => {
+      bar.allowFrom(foo, 80);
+      checkConnections([{
+        from: 'foo',
+        to: 'bar',
+        minPort: 80,
+        maxPort: 80,
+      }]);
+    });
+    it('port', () => {
+      bar.allowFrom(foo, new Port(80));
+      checkConnections([{
+        from: 'foo',
+        to: 'bar',
+        minPort: 80,
+        maxPort: 80,
+      }]);
+    });
+    it('port range', () => {
+      bar.allowFrom(foo, new PortRange(80, 85));
+      checkConnections([{
+        from: 'foo',
+        to: 'bar',
+        minPort: 80,
+        maxPort: 85,
+      }]);
+    });
+    it('connect to invalid port range', () => {
+      expect(() => foo.allowFrom(bar, true)).to
+        .throw('Input argument must be a number or a Range');
+    });
+    it('allow connections to publicInternet', () => {
+      publicInternet.allowFrom(foo, 80);
+      checkConnections([{
+        from: 'foo',
+        to: 'public',
+        minPort: 80,
+        maxPort: 80,
+      }]);
+    });
+    it('allow connections from publicInternet', () => {
+      foo.allowFrom(publicInternet, 80);
+      checkConnections([{
+        from: 'public',
+        to: 'foo',
+        minPort: 80,
+        maxPort: 80,
+      }]);
+    });
+    it('connect to LoadBalancer', () => {
+      fooLoadBalancer.allowFrom(bar, 80);
+      checkConnections([{
+        from: 'bar',
+        to: 'fooLoadBalancer',
+        minPort: 80,
+        maxPort: 80,
+      }]);
+    });
+    it('connect to publicInternet port range', () => {
+      expect(() =>
+        publicInternet.allowFrom(foo, new PortRange(80, 81))).to
+        .throw('public internet can only connect to single ports ' +
+                        'and not to port ranges');
+    });
+    it('connect from publicInternet port range', () => {
+      expect(() =>
+        foo.allowFrom(publicInternet, new PortRange(80, 81))).to
+        .throw('public internet can only connect to single ports ' +
+                        'and not to port ranges');
+    });
+    it('allowFrom non-container', () => {
+      expect(() => foo.allowFrom(10, 10)).to
+        .throw('Containers can only connect to other containers. ' +
+                    'Check that you\'re allowing connections from a ' +
+                    'container or list of containers, and not from a LoadBalancer ' +
+                    'or other object.');
+    });
+  });
+  describe('allow', () => {
+    let foo;
+    let bar;
+    let qux;
+    let quuz;
+    let fooBarGroup;
+    let quxQuuzGroup;
+    let lb;
+    beforeEach(() => {
+      foo = new Container('foo', 'image');
+      bar = new Container('bar', 'image');
+      qux = new Container('qux', 'image');
+      quuz = new Container('quuz', 'image');
+
+      fooBarGroup = [foo, bar];
+      quxQuuzGroup = [qux, quuz];
+      lb = new LoadBalancer('serv', [foo, bar, qux, quuz]);
+
+      deployment.deploy(fooBarGroup);
+      deployment.deploy(quxQuuzGroup);
+      deployment.deploy(lb);
     });
 
-    describe('Machine', function () {
-        const checkMachines = function (expected) {
-            const { machines } = deployment.toQuiltRepresentation();
-            expect(machines).to.have.lengthOf(expected.length)
-                .and.containSubset(expected);
-        };
-        it('basic', function () {
-            deployment.deploy([new Machine({
-                role: 'Worker',
-                provider: 'Amazon',
-                region: 'us-west-2',
-                size: 'm4.large',
-                cpu: new Range(2, 4),
-                ram: new Range(4, 8),
-                diskSize: 32,
-                sshKeys: ['key1', 'key2'],
-            })]);
-            checkMachines([{
-                id: '0dba3e899652cc7280485c75ad82e7ac7fd6b26e',
-                role: 'Worker',
-                provider: 'Amazon',
-                region: 'us-west-2',
-                size: 'm4.large',
-                cpu: new Range(2, 4),
-                ram: new Range(4, 8),
-                diskSize: 32,
-                sshKeys: ['key1', 'key2'],
-            }]);
-        });
-        it('hash independent of SSH keys', function () {
-            deployment.deploy([new Machine({
-                role: 'Worker',
-                provider: 'Amazon',
-                region: 'us-west-2',
-                size: 'm4.large',
-                cpu: new Range(2, 4),
-                ram: new Range(4, 8),
-                diskSize: 32,
-                sshKeys: ['key3'],
-            })]);
-            checkMachines([{
-                id: '0dba3e899652cc7280485c75ad82e7ac7fd6b26e',
-                role: 'Worker',
-                provider: 'Amazon',
-                region: 'us-west-2',
-                size: 'm4.large',
-                cpu: new Range(2, 4),
-                ram: new Range(4, 8),
-                diskSize: 32,
-                sshKeys: ['key3'],
-            }]);
-        });
-        it('replicate', function () {
-            const baseMachine = new Machine({ provider: 'Amazon' });
-            deployment.deploy(baseMachine.asMaster().replicate(2));
-            checkMachines([
-                {
-                    id: '4a364f325f7143db589a507cd3defb41a385d1bd',
-                    role: 'Master',
-                    provider: 'Amazon',
-                },
-                {
-                    id: '6595fa48111eec0c9cef2367f370b20f96d4a38c',
-                    role: 'Master',
-                    provider: 'Amazon',
-                },
-            ]);
-        });
-        it('replicate independent', function () {
-            const baseMachine = new Machine({ provider: 'Amazon' });
-            const machines = baseMachine.asMaster().replicate(2);
-            machines[0].sshKeys.push('key');
-            deployment.deploy(machines);
-            checkMachines([
-                {
-                    id: '4a364f325f7143db589a507cd3defb41a385d1bd',
-                    role: 'Master',
-                    provider: 'Amazon',
-                    sshKeys: ['key'],
-                },
-                {
-                    id: '6595fa48111eec0c9cef2367f370b20f96d4a38c',
-                    role: 'Master',
-                    provider: 'Amazon',
-                },
-            ]);
-        });
-        it('set floating IP', function () {
-            const baseMachine = new Machine({
-                provider: 'Amazon',
-                floatingIp: 'xxx.xxx.xxx.xxx',
-            });
-            deployment.deploy(baseMachine.asMaster());
-            checkMachines([{
-                id: '632f9edd209f2fcda1e9d407832f169abf66a1a2',
-                role: 'Master',
-                provider: 'Amazon',
-                floatingIp: 'xxx.xxx.xxx.xxx',
-                sshKeys: [],
-            }]);
-        });
-        it('preemptible attribute', function () {
-            deployment.deploy(new Machine({
-              provider: 'Amazon',
-              preemptible: true
-            }).asMaster());
-            checkMachines([{
-                id: '8a0d2198229c09b8b5ec1bdba7105a9e08f8ef0b',
-                role: 'Master',
-                provider: 'Amazon',
-                preemptible: true,
-            }]);
-        });
+    it('both src and dst are lists', () => {
+      allow(quxQuuzGroup, fooBarGroup, 80);
+      checkConnections([
+        { from: 'qux', to: 'foo', minPort: 80, maxPort: 80 },
+        { from: 'qux', to: 'bar', minPort: 80, maxPort: 80 },
+        { from: 'quuz', to: 'foo', minPort: 80, maxPort: 80 },
+        { from: 'quuz', to: 'bar', minPort: 80, maxPort: 80 },
+      ]);
     });
 
-    describe('Container', function () {
-        const checkContainers = function (expected) {
-            const { containers } = deployment.toQuiltRepresentation();
-            expect(containers).to.have.lengthOf(expected.length)
-                .and.containSubset(expected);
-        };
-        it('basic', function () {
-            deployment.deploy(new Service('foo', [
-                new Container('image'),
-            ]));
-            checkContainers([{
-                id: '475c40d6070969839ba0f88f7a9bd0cc7936aa30',
-                image: new Image('image'),
-                command: [],
-                env: {},
-                filepathToContent: {},
-            }]);
-        });
-        it('command', function () {
-            deployment.deploy(new Service('foo', [
-                new Container('image', ['arg1', 'arg2']),
-            ]));
-            checkContainers([{
-                id: '45b5015830c4b8fb738d15c7a2822ee108c20bd8',
-                image: new Image('image'),
-                command: ['arg1', 'arg2'],
-                env: {},
-                filepathToContent: {},
-            }]);
-        });
-        it('env', function () {
-            const c = new Container('image');
-            c.env.foo = 'bar';
-            deployment.deploy(new Service('foo', [c]));
-            checkContainers([{
-                id: 'f54486d0f95b4cc478952a1a775a0699d8f5d959',
-                image: new Image('image'),
-                command: [],
-                env: { foo: 'bar' },
-                filepathToContent: {},
-            }]);
-        });
-        it('command, env, and files', function () {
-            deployment.deploy(new Service('foo', [
-                new Container('image', ['arg1', 'arg2'])
-                    .withEnv({ foo: 'bar' })
-                    .withFiles({ qux: 'quuz' }),
-            ]));
-            checkContainers([{
-                id: '3f0028780b8d9e35ae8c02e4e8b87e2ca55305db',
-                image: new Image('image'),
-                command: ['arg1', 'arg2'],
-                env: { foo: 'bar' },
-                filepathToContent: { qux: 'quuz' },
-            }]);
-        });
-        it('image dockerfile', function () {
-            const c = new Container(new Image('name', 'dockerfile'));
-            deployment.deploy(new Service('foo', [c]));
-            checkContainers([{
-                id: '1dc23744f60b5c2fb7e3eafb3e8a7e3b085b9b9c',
-                image: new Image('name', 'dockerfile'),
-                command: [],
-                env: {},
-                filepathToContent: {},
-            }]);
-        });
-        it('replicate', function () {
-            deployment.deploy(new Service('foo', new Container('image', ['arg'])
-                .replicate(2)));
-            checkContainers([
-                {
-                    id: '6563036090dd1a6d4a2fe2f56a31e61c2cdca8e2',
-                    image: new Image('image'),
-                    command: ['arg'],
-                    env: {},
-                    filepathToContent: {},
-                },
-                {
-                    id: 'c6cea5bd411c6e5afac755c37517af89a2d03dbe',
-                    image: new Image('image'),
-                    command: ['arg'],
-                    env: {},
-                    filepathToContent: {},
-                },
-            ]);
-        });
-        it('replicate independent', function () {
-            const repl = new Container('image', ['arg']).replicate(2);
-            repl[0].env.foo = 'bar';
-            repl[0].command.push('changed');
-            deployment.deploy(new Service('baz', repl));
-            checkContainers([
-                {
-                    id: '6563036090dd1a6d4a2fe2f56a31e61c2cdca8e2',
-                    image: new Image('image'),
-                    command: ['arg'],
-                    env: {},
-                    filepathToContent: {},
-                },
-                {
-                    id: 'c3371b4dec2600f20cd8cc5b59bc116dedcbea92',
-                    image: new Image('image'),
-                    command: ['arg', 'changed'],
-                    env: { foo: 'bar' },
-                    filepathToContent: {},
-                },
-            ]);
-        });
-        it('hostname', function () {
-            const c = new Container(new Image('image'));
-            c.setHostname('host');
-            deployment.deploy(new Service('foo', [c]));
-            checkContainers([{
-                id: '475c40d6070969839ba0f88f7a9bd0cc7936aa30',
-                image: new Image('image'),
-                command: [],
-                env: {},
-                filepathToContent: {},
-                hostname: 'host',
-            }]);
-        });
-        it('#getHostname()', function () {
-            const c = new Container('image');
-            c.setHostname('host');
-            expect(c.getHostname()).to.equal('host.q');
-        });
-        it('duplicate hostname', function () {
-            const a = new Container('image');
-            a.setHostname('host');
-            const b = new Container('image');
-            b.setHostname('host');
-            deployment.deploy(new Service('foo', [a, b]));
-            expect(() => deployment.toQuiltRepresentation()).to
-                .throw('hostname "host" used for multiple containers');
-        });
+    it('dst is a list', () => {
+      allow(qux, fooBarGroup, 80);
+      checkConnections([
+        { from: 'qux', to: 'foo', minPort: 80, maxPort: 80 },
+        { from: 'qux', to: 'bar', minPort: 80, maxPort: 80 },
+      ]);
     });
 
-    describe('Placement', function () {
-        let target;
-        let other;
-        const checkPlacements = function (expected) {
-            deployment.deploy(target);
-            deployment.deploy(other);
-            const { placements } = deployment.toQuiltRepresentation();
-            expect(placements).to.have.lengthOf(expected.length)
-                .and.containSubset(expected);
-        };
-        beforeEach(function () {
-            target = new Service('target', []);
-            other = new Service('other', []);
-        });
-        it('LabelRule', function () {
-            target.place(new LabelRule(true, other));
-            checkPlacements([{
-                targetLabel: 'target',
-                otherLabel: 'other',
-                exclusive: true,
-            }]);
-        });
-        it('MachineRule size, region, provider', function () {
-            target.place(new MachineRule(true, {
-                size: 'm4.large',
-                region: 'us-west-2',
-                provider: 'Amazon',
-            }));
-            checkPlacements([{
-                targetLabel: 'target',
-                exclusive: true,
-                region: 'us-west-2',
-                provider: 'Amazon',
-                size: 'm4.large',
-            }]);
-        });
-        it('MachineRule size, provider', function () {
-            target.place(new MachineRule(true, {
-                size: 'm4.large',
-                provider: 'Amazon',
-            }));
-            checkPlacements([{
-                targetLabel: 'target',
-                exclusive: true,
-                provider: 'Amazon',
-                size: 'm4.large',
-            }]);
-        });
-        it('MachineRule floatingIp', function () {
-            target.place(new MachineRule(false, {
-                floatingIp: 'xxx.xxx.xxx.xxx',
-            }));
-            checkPlacements([{
-                targetLabel: 'target',
-                exclusive: false,
-                floatingIp: 'xxx.xxx.xxx.xxx',
-            }]);
-        });
+    it('src is a list', () => {
+      allow(fooBarGroup, qux, 80);
+      checkConnections([
+        { from: 'foo', to: 'qux', minPort: 80, maxPort: 80 },
+        { from: 'bar', to: 'qux', minPort: 80, maxPort: 80 },
+      ]);
     });
-    describe('Label', function () {
-        const checkLabels = function (expected) {
-            const { labels } = deployment.toQuiltRepresentation();
-            expect(labels).to.have.lengthOf(expected.length)
-                .and.containSubset(expected);
-        };
-        it('basic', function () {
-            deployment.deploy(new Service('web_tier', [new Container('nginx')]));
-            checkLabels([{
-                name: 'web_tier',
-                ids: ['c47b5770b59a4459519ba2b3ae3cd7a1598fbd8d'],
-                annotations: [],
-            }]);
-        });
-        it('multiple containers', function () {
-            deployment.deploy(new Service('web_tier', [
-                new Container('nginx'),
-                new Container('nginx'),
-            ]));
-            checkLabels([{
-                name: 'web_tier',
-                ids: [
-                    'c47b5770b59a4459519ba2b3ae3cd7a1598fbd8d',
-                    '6044e40ba6e4d97be45ca290b993ef2f368c7bb1',
-                ],
-                annotations: [],
-            }]);
-        });
-        it('duplicate services', function () {
-            /* Conflicting label names.  We need to generate a couple of dummy containers
-               so that the two deployed containers have _refID's that are sorted
-               differently lexicographically and numerically. */
-            for (let i = 0; i < 2; i += 1) {
-                Container('image');
-            }
-            deployment.deploy(new Service('foo', [new Container('image')]));
-            for (let i = 0; i < 7; i += 1) {
-                Container('image');
-            }
-            deployment.deploy(new Service('foo', [new Container('image')]));
-            checkLabels([
-                {
-                    name: 'foo',
-                    ids: ['475c40d6070969839ba0f88f7a9bd0cc7936aa30'],
-                    annotations: [],
-                },
-                {
-                    name: 'foo2',
-                    ids: ['3047630375a1621cb400811b795757a07de8e268'],
-                    annotations: [],
-                },
-            ]);
-        });
-        it('get service hostname', function () {
-            const foo = new Service('foo', []);
-            expect(foo.hostname()).to.equal('foo.q');
-        });
-        it('get service children', function () {
-            const foo = new Service('foo', [
-                new Container('bar'),
-                new Container('baz'),
-            ]);
-            expect(foo.children()).to.eql(['1.foo.q', '2.foo.q']);
-        });
+
+    it('src is public', () => {
+      allow(publicInternet, fooBarGroup, 80);
+      checkConnections([
+        { from: 'public', to: 'foo', minPort: 80, maxPort: 80 },
+        { from: 'public', to: 'bar', minPort: 80, maxPort: 80 },
+      ]);
     });
-    describe('AllowFrom', function () {
-        let foo;
-        let bar;
-        beforeEach(function () {
-            foo = new Service('foo', []);
-            bar = new Service('bar', []);
-            deployment.deploy([foo, bar]);
-        });
-        const checkConnections = function (expected) {
-            const { connections } = deployment.toQuiltRepresentation();
-            expect(connections).to.have.lengthOf(expected.length)
-                .and.containSubset(expected);
-        };
-        it('autobox port ranges', function () {
-            bar.allowFrom(foo, 80);
-            checkConnections([{
-                from: 'foo',
-                to: 'bar',
-                minPort: 80,
-                maxPort: 80,
-            }]);
-        });
-        it('port', function () {
-            bar.allowFrom(foo, new Port(80));
-            checkConnections([{
-                from: 'foo',
-                to: 'bar',
-                minPort: 80,
-                maxPort: 80,
-            }]);
-        });
-        it('port range', function () {
-            bar.allowFrom(foo, new PortRange(80, 85));
-            checkConnections([{
-                from: 'foo',
-                to: 'bar',
-                minPort: 80,
-                maxPort: 85,
-            }]);
-        });
-        it('connect to invalid port range', function () {
-            expect(() => foo.connect(true, bar)).to
-                .throw('Input argument must be a number or a Range');
-        });
-        it('allow connections to publicInternet', function () {
-            publicInternet.allowFrom(foo, 80);
-            checkConnections([{
-                from: 'foo',
-                to: 'public',
-                minPort: 80,
-                maxPort: 80,
-            }]);
-        });
-        it('allow connections from publicInternet', function () {
-            foo.allowFrom(publicInternet, 80);
-            checkConnections([{
-                from: 'public',
-                to: 'foo',
-                minPort: 80,
-                maxPort: 80,
-            }]);
-        });
-        it('connect to publicInternet port range', function () {
-            expect(() => publicInternet.allowFrom(foo, new PortRange(80, 81))).to
-                .throw('public internet can only connect to single ports and not to port ranges');
-        });
-        it('connect from publicInternet port range', function () {
-            expect(() => foo.allowFrom(publicInternet, new PortRange(80, 81))).to
-                .throw('public internet can only connect to single ports and not to port ranges');
-        });
-        it('allowFrom non-service', function () {
-            expect(() => foo.allowFrom(10, 10)).to
-                .throw(`Services can only connect to other services. ` +
-                    `Check that you're allowing connections from a service, and not ` +
-                    `from a Container or other object.`);
-        });
+
+    it('dst is public', () => {
+      allow(fooBarGroup, publicInternet, 80);
+      checkConnections([
+        { from: 'foo', to: 'public', minPort: 80, maxPort: 80 },
+        { from: 'bar', to: 'public', minPort: 80, maxPort: 80 },
+      ]);
     });
-    describe('Connect', function () {
-        // This test runs all of the same tests as AllowFrom, but uses the
-        // deprecated connect() function rather than the newer allowFrom()
-        // function. We can remove this as soon as we remove support for
-        // connect().
-        let foo;
-        let bar;
-        beforeEach(function () {
-            foo = new Service('foo', []);
-            bar = new Service('bar', []);
-            deployment.deploy([foo, bar]);
-        });
-        const checkConnections = function (expected) {
-            const { connections } = deployment.toQuiltRepresentation();
-            expect(connections).to.have.lengthOf(expected.length)
-                .and.containSubset(expected);
-        };
-        it('port', function () {
-            foo.connect(new Port(80), bar);
-            checkConnections([{
-                from: 'foo',
-                to: 'bar',
-                minPort: 80,
-                maxPort: 80,
-            }]);
-        });
-        it('port range', function () {
-            foo.connect(new PortRange(80, 85), bar);
-            checkConnections([{
-                from: 'foo',
-                to: 'bar',
-                minPort: 80,
-                maxPort: 85,
-            }]);
-        });
-        it('connect to invalid port range', function () {
-            expect(() => foo.connect(true, bar)).to
-                .throw('Input argument must be a number or a Range');
-        });
-        it('connect to publicInternet', function () {
-            foo.connect(80, publicInternet);
-            checkConnections([{
-                from: 'foo',
-                to: 'public',
-                minPort: 80,
-                maxPort: 80,
-            }]);
-        });
-        it('connect from publicInternet', function () {
-            publicInternet.connect(80, foo);
-            checkConnections([{
-                from: 'public',
-                to: 'foo',
-                minPort: 80,
-                maxPort: 80,
-            }]);
-        });
-        it('connect to publicInternet port range', function () {
-            expect(() => foo.connect(new PortRange(80, 81), publicInternet)).to
-                .throw('public internet can only connect to single ports and not to port ranges');
-        });
-        it('connect from publicInternet port range', function () {
-            expect(() => publicInternet.connect(new PortRange(80, 81), foo)).to
-                .throw('public internet can only connect to single ports and not to port ranges');
-        });
-        it('connect to non-service', function () {
-            expect(() => foo.connect(10, 10)).to
-                .throw(`Services can only connect to other services. ` +
-                    `Check that you're connecting to a service, and not ` +
-                    `to a Container or other object.`);
-        });
+
+    it('dst is a LoadBalancer', () => {
+      allow(fooBarGroup, lb, 80);
+      checkConnections([
+        { from: 'foo', to: 'serv', minPort: 80, maxPort: 80 },
+        { from: 'bar', to: 'serv', minPort: 80, maxPort: 80 },
+      ]);
     });
-    describe('Vet', function () {
-        let foo;
-        const deploy = () => deployment.toQuiltRepresentation();
-        beforeEach(function () {
-            foo = new Service('foo', []);
-            deployment.deploy([foo]);
-        });
-        it('connect to undeployed label', function () {
-            foo.allowFrom(new Service('baz', []), 80);
-            expect(deploy).to.throw('foo allows connections from an undeployed service: baz');
-        });
-        it('placement in terms of undeployed label', function () {
-            foo.place(new MachineRule(false, { provider: 'Amazon' }));
-            foo.place(new LabelRule(true, new Service('baz', [])));
-            expect(deploy).to
-                .throw('foo has a placement in terms of an undeployed service: baz');
-        });
-        it('floating IP and multiple containers', function () {
-            foo = new Service('foo', new Container('image').replicate(2));
-            foo.place(new MachineRule(false, {
-                floatingIp: '123',
-            }));
-            foo.connectFromPublic(80);
-            deployment.deploy([foo]);
-            expect(deploy).to.throw(
-                'foo2 has a floating IP and multiple containers. This is not yet supported.');
-        });
-        it('duplicate image', function () {
-            deployment.deploy(new Service('foo', [new Container(new Image('img', 'dk'))]));
-            deployment.deploy(new Service('foo', [new Container(new Image('img', 'dk'))]));
-            expect(deploy).to.not.throw();
-        });
-        it('duplicate image with different Dockerfiles', function () {
-            deployment.deploy(new Service('foo', [new Container(new Image('img', 'dk'))]));
-            deployment.deploy(new Service('foo', [new Container(new Image('img', 'dk2'))]));
-            expect(deploy).to.throw('img has differing Dockerfiles');
-        });
+  });
+  describe('Vet', () => {
+    let foo;
+    const deploy = () => deployment.toQuiltRepresentation();
+    beforeEach(() => {
+      foo = new LoadBalancer('foo', []);
+      deployment.deploy([foo]);
     });
-    describe('Custom Deploy', function () {
-        it('basic', function () {
-            deployment.deploy({
-                deploy(dep) {
-                    dep.deploy([
-                        new Service('web_tier', [new Container('nginx')]),
-                        new Service('web_tier2', [new Container('nginx')]),
-                    ]);
-                },
-            });
-            const { labels } = deployment.toQuiltRepresentation();
-            expect(labels).to.have.lengthOf(2)
-                .and.containSubset([
-                    {
-                        name: 'web_tier',
-                        ids: ['c47b5770b59a4459519ba2b3ae3cd7a1598fbd8d'],
-                        annotations: [],
-                    },
-                    {
-                        name: 'web_tier2',
-                        ids: ['6044e40ba6e4d97be45ca290b993ef2f368c7bb1'],
-                        annotations: [],
-                    },
-                ]);
-        });
-        it('missing deploy', function () {
-            expect(() => deployment.deploy({})).to.throw(
-                'only objects that implement "deploy(deployment)" can be deployed');
-        });
+    it('connect from undeployed container', () => {
+      foo.allowFrom(new Container('baz', 'image'), 80);
+      expect(deploy).to.throw(
+        'connection {"from":"baz","maxPort":80,"minPort":80,' +
+                '"to":"foo"} references an undefined hostname: baz');
     });
-    describe('Create Deployment', function () {
-        it('no args', function () {
-            expect(createDeployment).to.not.throw();
-        });
+    it('duplicate image', () => {
+      deployment.deploy(new Container('host', new Image('img', 'dk')));
+      deployment.deploy(new Container('host', new Image('img', 'dk')));
+      expect(deploy).to.not.throw();
     });
-    describe('Query', function () {
-        it('namespace', function () {
-            deployment = createDeployment({ namespace: 'myNamespace' });
-            expect(deployment.toQuiltRepresentation().namespace).to.equal('myNamespace');
-        });
-        it('default namespace', function () {
-            expect(deployment.toQuiltRepresentation().namespace).to.equal('default-namespace');
-        });
-        it('max price', function () {
-            deployment = createDeployment({ maxPrice: 5 });
-            expect(deployment.toQuiltRepresentation().maxPrice).to.equal(5);
-        });
-        it('default max price', function () {
-            expect(deployment.toQuiltRepresentation().maxPrice).to.equal(0);
-        });
-        it('admin ACL', function () {
-            deployment = createDeployment({ adminACL: ['local'] });
-            expect(deployment.toQuiltRepresentation().adminACL).to.eql(['local']);
-        });
-        it('default admin ACL', function () {
-            expect(deployment.toQuiltRepresentation().adminACL).to.eql([]);
-        });
+    it('duplicate image with different Dockerfiles', () => {
+      deployment.deploy(new Container('host', new Image('img', 'dk')));
+      deployment.deploy(new Container('host', new Image('img', 'dk2')));
+      expect(deploy).to.throw('img has differing Dockerfiles');
     });
-    describe('githubKeys()', function () {});
+  });
+  describe('Custom Deploy', () => {
+    it('basic', () => {
+      deployment.deploy({
+        deploy(dep) {
+          dep.deploy([
+            new LoadBalancer('web_tier', [
+              new Container('host', 'nginx')]),
+            new LoadBalancer('web_tier2', [
+              new Container('host', 'nginx')]),
+          ]);
+        },
+      });
+      const { loadBalancers } = deployment.toQuiltRepresentation();
+      expect(loadBalancers).to.have.lengthOf(2)
+        .and.containSubset([
+          {
+            name: 'web_tier',
+            hostnames: ['host'],
+          },
+          {
+            name: 'web_tier2',
+            hostnames: ['host2'],
+          },
+        ]);
+    });
+    it('missing deploy', () => {
+      expect(() => deployment.deploy({})).to.throw(
+        'only objects that implement "deploy(deployment)" can be ' +
+                'deployed');
+    });
+  });
+  describe('Create Deployment', () => {
+    it('no args', () => {
+      expect(createDeployment).to.not.throw();
+    });
+    it('should error when given invalid arguments', () => {
+      expect(() => createDeployment({ badArg: 'foo' }))
+        .to.throw('Unrecognized keys passed to Deployment constructor: badArg');
+    });
+  });
+  describe('Query', () => {
+    it('namespace', () => {
+      deployment = createDeployment({ namespace: 'myNamespace' });
+      expect(deployment.toQuiltRepresentation().namespace).to.equal(
+        'myNamespace');
+    });
+    it('default namespace', () => {
+      expect(deployment.toQuiltRepresentation().namespace).to.equal(
+        'default-namespace');
+    });
+    it('max price', () => {
+      deployment = createDeployment({ maxPrice: 5 });
+      expect(deployment.toQuiltRepresentation().maxPrice).to.equal(5);
+    });
+    it('default max price', () => {
+      expect(deployment.toQuiltRepresentation().maxPrice).to.equal(0);
+    });
+    it('admin ACL', () => {
+      deployment = createDeployment({ adminACL: ['local'] });
+      expect(deployment.toQuiltRepresentation().adminACL).to.eql(
+        ['local']);
+    });
+    it('default admin ACL', () => {
+      expect(deployment.toQuiltRepresentation().adminACL).to.eql([]);
+    });
+  });
+  describe('githubKeys()', () => {});
+  describe('baseInfrastructure', () => {
+    it('should error if name is not a string', () => {
+      const expectedFail = () => {
+        baseInfrastructure(1);
+      };
+      expect(expectedFail).to.throw('name must be a string');
+    });
+  });
 });
