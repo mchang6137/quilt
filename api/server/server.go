@@ -12,11 +12,11 @@ import (
 	"github.com/quilt/quilt/api"
 	"github.com/quilt/quilt/api/client"
 	"github.com/quilt/quilt/api/pb"
+	"github.com/quilt/quilt/blueprint"
 	"github.com/quilt/quilt/connection"
 	"github.com/quilt/quilt/connection/credentials"
 	"github.com/quilt/quilt/counter"
 	"github.com/quilt/quilt/db"
-	"github.com/quilt/quilt/stitch"
 	"github.com/quilt/quilt/version"
 
 	"github.com/docker/distribution/reference"
@@ -194,12 +194,12 @@ func (s server) Deploy(cts context.Context, deployReq *pb.DeployRequest) (
 		return nil, errDaemonOnlyRPC
 	}
 
-	stitch, err := stitch.FromJSON(deployReq.Deployment)
+	newBlueprint, err := blueprint.FromJSON(deployReq.Deployment)
 	if err != nil {
 		return &pb.DeployReply{}, err
 	}
 
-	for _, c := range stitch.Containers {
+	for _, c := range newBlueprint.Containers {
 		if _, err := reference.ParseAnyReference(c.Image.Name); err != nil {
 			return &pb.DeployReply{}, fmt.Errorf("could not parse "+
 				"container image %s: %s", c.Image.Name, err.Error())
@@ -207,13 +207,13 @@ func (s server) Deploy(cts context.Context, deployReq *pb.DeployRequest) (
 	}
 
 	err = s.conn.Txn(db.BlueprintTable).Run(func(view db.Database) error {
-		blueprint, err := view.GetBlueprint()
+		bp, err := view.GetBlueprint()
 		if err != nil {
-			blueprint = view.InsertBlueprint()
+			bp = view.InsertBlueprint()
 		}
 
-		blueprint.Stitch = stitch
-		view.Commit(blueprint)
+		bp.Blueprint = newBlueprint
+		view.Commit(bp)
 		return nil
 	})
 	if err != nil {
@@ -221,7 +221,7 @@ func (s server) Deploy(cts context.Context, deployReq *pb.DeployRequest) (
 	}
 
 	// XXX: Remove this error when the Vagrant provider is done.
-	for _, machine := range stitch.Machines {
+	for _, machine := range newBlueprint.Machines {
 		if machine.Provider == string(db.Vagrant) {
 			err = errors.New("The Vagrant provider is still in development." +
 				" The blueprint will continue to run, but" +
@@ -301,16 +301,16 @@ func queryWorkers(machines []db.Machine, creds connection.Credentials) (
 func updateLeaderContainerAttrs(lContainers []db.Container, wContainers []db.Container) (
 	allContainers []db.Container) {
 
-	// Map StitchID to db.Container for a hash join.
+	// Map BlueprintID to db.Container for a hash join.
 	cMap := make(map[string]db.Container)
 	for _, wc := range wContainers {
-		cMap[wc.StitchID] = wc
+		cMap[wc.BlueprintID] = wc
 	}
 
 	// If we are able to match a worker container to a leader container, then we
 	// copy the worker-only attributes to the leader view.
 	for _, lc := range lContainers {
-		if wc, ok := cMap[lc.StitchID]; ok {
+		if wc, ok := cMap[lc.BlueprintID]; ok {
 			lc.Created = wc.Created
 			lc.DockerID = wc.DockerID
 			lc.Status = wc.Status

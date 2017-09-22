@@ -98,22 +98,22 @@ func TestMachineOutput(t *testing.T) {
 
 	machines := []db.Machine{
 		{
-			StitchID: "1",
-			Role:     db.Master,
-			Provider: "Amazon",
-			Region:   "us-west-1",
-			Size:     "m4.large",
-			PublicIP: "8.8.8.8",
-			Status:   db.Connected,
+			BlueprintID: "1",
+			Role:        db.Master,
+			Provider:    "Amazon",
+			Region:      "us-west-1",
+			Size:        "m4.large",
+			PublicIP:    "8.8.8.8",
+			Status:      db.Connected,
 		}, {
-			StitchID:   "2",
-			Role:       db.Worker,
-			Provider:   "DigitalOcean",
-			Region:     "sfo1",
-			Size:       "2gb",
-			PublicIP:   "9.9.9.9",
-			FloatingIP: "10.10.10.10",
-			Status:     db.Connected,
+			BlueprintID: "2",
+			Role:        db.Worker,
+			Provider:    "DigitalOcean",
+			Region:      "sfo1",
+			Size:        "2gb",
+			PublicIP:    "9.9.9.9",
+			FloatingIP:  "10.10.10.10",
+			Status:      db.Connected,
 		},
 	}
 
@@ -151,24 +151,24 @@ func TestContainerOutput(t *testing.T) {
 	t.Parallel()
 
 	containers := []db.Container{
-		{ID: 1, StitchID: "3", Minion: "3.3.3.3", IP: "1.2.3.4",
+		{ID: 1, BlueprintID: "3", Minion: "3.3.3.3", IP: "1.2.3.4",
 			Image: "image1", Command: []string{"cmd", "1"},
 			Hostname: "notpublic", Status: "running"},
-		{ID: 2, StitchID: "1", Minion: "1.1.1.1", Image: "image2",
+		{ID: 2, BlueprintID: "1", Minion: "1.1.1.1", Image: "image2",
 			Status: "scheduled", Hostname: "frompublic1"},
-		{ID: 3, StitchID: "4", Minion: "1.1.1.1", Image: "image3",
+		{ID: 3, BlueprintID: "4", Minion: "1.1.1.1", Image: "image3",
 			Command:  []string{"cmd"},
 			Hostname: "frompublic2",
 			Status:   "scheduled"},
-		{ID: 4, StitchID: "7", Minion: "2.2.2.2", Image: "image1",
+		{ID: 4, BlueprintID: "7", Minion: "2.2.2.2", Image: "image1",
 			Command:  []string{"cmd", "3", "4"},
 			Hostname: "frompublic3"},
-		{ID: 5, StitchID: "8", Image: "image1"},
+		{ID: 5, BlueprintID: "8", Image: "image1"},
 	}
 	machines := []db.Machine{
-		{StitchID: "5", PublicIP: "7.7.7.7", PrivateIP: "1.1.1.1"},
-		{StitchID: "6", PrivateIP: "2.2.2.2"},
-		{StitchID: "7", PrivateIP: ""},
+		{BlueprintID: "5", PublicIP: "7.7.7.7", PrivateIP: "1.1.1.1"},
+		{BlueprintID: "6", PrivateIP: "2.2.2.2"},
+		{BlueprintID: "7", PrivateIP: ""},
 	}
 	connections := []db.Connection{
 		{ID: 1, From: "public", To: "frompublic1", MinPort: 80, MaxPort: 80},
@@ -199,7 +199,7 @@ ________________________________________________________________________________
 	mockCreatedString = strings.Replace(mockCreatedString, " ", "_", -1)
 
 	containers = []db.Container{
-		{ID: 1, StitchID: "3", Minion: "3.3.3.3", IP: "1.2.3.4",
+		{ID: 1, BlueprintID: "3", Minion: "3.3.3.3", IP: "1.2.3.4",
 			Image: "image1", Command: []string{"cmd", "1"},
 			Status: "running", Created: mockTime.UTC()},
 	}
@@ -221,7 +221,7 @@ ________________________________________________________________________________
 	mockCreatedString = strings.Replace(mockCreatedString, " ", "_", -1)
 
 	containers = []db.Container{
-		{ID: 1, StitchID: "3", Minion: "3.3.3.3", IP: "1.2.3.4",
+		{ID: 1, BlueprintID: "3", Minion: "3.3.3.3", IP: "1.2.3.4",
 			Image: "image1", Command: []string{"cmd", "1"},
 			Status: "running", Created: mockTime.UTC()},
 	}
@@ -237,7 +237,7 @@ ________________________________________________________________________________
 
 	// Test that long outputs are truncated when `truncate` is true
 	containers = []db.Container{
-		{ID: 1, StitchID: "3", Minion: "3.3.3.3", IP: "1.2.3.4",
+		{ID: 1, BlueprintID: "3", Minion: "3.3.3.3", IP: "1.2.3.4",
 			Image: "image1", Command: []string{"cmd", "1", "&&", "cmd",
 				"91283403472903847293014320984723908473248-23843984"},
 			Status: "running", Created: mockTime.UTC()},
@@ -263,11 +263,14 @@ ________________________________________________________________________________
 
 	// Test writing container that has multiple connections to the public
 	// internet.
-	containers = []db.Container{
-		{StitchID: "3", Minion: "1.1.1.1", Image: "image1", Hostname: "frompub"},
-	}
+	containers = []db.Container{{
+		BlueprintID: "3",
+		Minion:      "1.1.1.1",
+		Image:       "image1",
+		Hostname:    "frompub",
+	}}
 	machines = []db.Machine{
-		{StitchID: "5", PublicIP: "7.7.7.7", PrivateIP: "1.1.1.1"},
+		{BlueprintID: "5", PublicIP: "7.7.7.7", PrivateIP: "1.1.1.1"},
 	}
 	connections = []db.Connection{
 		{ID: 1, From: "public", To: "frompub", MinPort: 80, MaxPort: 80},
@@ -287,7 +290,7 @@ func TestContainerOutputCustomImage(t *testing.T) {
 
 	// Building.
 	containers := []db.Container{
-		{StitchID: "3", Image: "custom-dockerfile"},
+		{BlueprintID: "3", Image: "custom-dockerfile"},
 	}
 	images := []db.Image{
 		{Name: "custom-dockerfile", Status: db.Building},
@@ -324,7 +327,7 @@ func TestContainerOutputCustomImage(t *testing.T) {
 		{Name: "custom-dockerfile", Status: db.Built},
 	}
 	containers = []db.Container{
-		{StitchID: "3", Image: "custom-dockerfile", Minion: "foo"},
+		{BlueprintID: "3", Image: "custom-dockerfile", Minion: "foo"},
 	}
 	exp = `CONTAINER____MACHINE____COMMAND_______________HOSTNAME____STATUS` +
 		`_______CREATED____PUBLIC_IP

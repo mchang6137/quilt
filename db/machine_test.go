@@ -53,10 +53,7 @@ func TestMachine(t *testing.T) {
 
 		db.Remove(m)
 
-		if err := SelectMachineCheck(db, nil, nil); err != nil {
-			return err
-		}
-		return nil
+		return SelectMachineCheck(db, nil, nil)
 	})
 	if err != nil {
 		t.Error(err.Error())
@@ -115,7 +112,7 @@ func TestMachineString(t *testing.T) {
 
 	m = Machine{
 		ID:          1,
-		StitchID:    "1",
+		BlueprintID: "1",
 		Role:        Worker,
 		Preemptible: true,
 		CloudID:     "CloudID1234",

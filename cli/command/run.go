@@ -16,14 +16,14 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 
 	"github.com/quilt/quilt/api/client"
-	"github.com/quilt/quilt/stitch"
+	"github.com/quilt/quilt/blueprint"
 	"github.com/quilt/quilt/util"
 )
 
-// Run contains the options for running Stitches.
+// Run contains the options for running blueprints.
 type Run struct {
-	stitch string
-	force  bool
+	blueprint string
+	force     bool
 
 	connectionHelper
 }
@@ -43,7 +43,7 @@ deployment. Confirmation can be skipped with the -f flag.`
 func (rCmd *Run) InstallFlags(flags *flag.FlagSet) {
 	rCmd.connectionHelper.InstallFlags(flags)
 
-	flags.StringVar(&rCmd.stitch, "blueprint", "", "the blueprint to run")
+	flags.StringVar(&rCmd.blueprint, "blueprint", "", "the blueprint to run")
 	flags.BoolVar(&rCmd.force, "f", false, "deploy without confirming changes")
 
 	flags.Usage = func() {
@@ -53,11 +53,11 @@ func (rCmd *Run) InstallFlags(flags *flag.FlagSet) {
 
 // Parse parses the command line arguments for the run command.
 func (rCmd *Run) Parse(args []string) error {
-	if rCmd.stitch == "" {
+	if rCmd.blueprint == "" {
 		if len(args) == 0 {
 			return errors.New("no blueprint specified")
 		}
-		rCmd.stitch = args[0]
+		rCmd.blueprint = args[0]
 	}
 
 	return nil
@@ -65,11 +65,11 @@ func (rCmd *Run) Parse(args []string) error {
 
 var errNoBlueprint = errors.New("no blueprint")
 
-var compile = stitch.FromFile
+var compile = blueprint.FromFile
 
-// Run starts the run for the provided Stitch.
+// Run starts the run for the provided Blueprint.
 func (rCmd *Run) Run() int {
-	compiled, err := compile(rCmd.stitch)
+	compiled, err := compile(rCmd.blueprint)
 	if err != nil {
 		log.Error(err)
 		return 1
@@ -116,16 +116,16 @@ func (rCmd *Run) Run() int {
 	return 0
 }
 
-func getCurrentDeployment(c client.Client) (stitch.Stitch, error) {
+func getCurrentDeployment(c client.Client) (blueprint.Blueprint, error) {
 	blueprints, err := c.QueryBlueprints()
 	if err != nil {
-		return stitch.Stitch{}, err
+		return blueprint.Blueprint{}, err
 	}
 	switch len(blueprints) {
 	case 0:
-		return stitch.Stitch{}, errNoBlueprint
+		return blueprint.Blueprint{}, errNoBlueprint
 	case 1:
-		return blueprints[0].Stitch, nil
+		return blueprints[0].Blueprint, nil
 	default:
 		panic("unreached")
 	}

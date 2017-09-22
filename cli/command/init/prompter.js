@@ -42,25 +42,36 @@ function isNumber(input) {
 }
 
 /**
-  * Get user friendly descriptions for the instance types listed for the
-  * chosen provider in providers.json.
-  * The output map would have entries like {'small (m3.medium)': 'm3.medium'}
+  * Converts a map from friendly names to formal values into an array of objects
+  * compatible with the `choices` attribute of inquirer questions. For example,
+  * `{small: 't2.micro'}` would convert to
+  * `[{name: 'small (t2.micro)', value: 't2.micro'}].
   *
-  * @param {Provider} provider The chosen Provider.
-  * @return {Object.<string, string>} A map from the size description to the
-  *   corresponding size.
+  * @param {Object.<string, string>} info The data to make descriptions for.
+  * @return {Object.<string, string>[]} An array of {name, val} objects.
+  *
   */
-function getSizeDescriptions(provider) {
-  const sizeDescriptions = {};
-  const sizes = provider.getSizes();
-  const sizeCategories = Object.keys(sizes);
-
-  sizeCategories.forEach((category) => {
-    const size = sizes[category];
-    const description = `${category} (${size})`;
-    sizeDescriptions[description] = size;
+function getInquirerDescriptions(friendlyNameToValue) {
+  return Object.keys(friendlyNameToValue).map((friendlyName) => {
+    const formalValue = friendlyNameToValue[friendlyName];
+    return { name: `${friendlyName} (${formalValue})`, value: formalValue };
   });
-  return sizeDescriptions;
+}
+
+function questionWithHelp(question, helpstring) {
+  const newQuestion = Object.assign({}, question);
+
+  newQuestion.message = `(? for help) ${question.message}`;
+  newQuestion.validate = function validate(input) {
+    if (input === '?') {
+      return helpstring;
+    }
+    if (question.validate === undefined) {
+      return true;
+    }
+    return question.validate(input);
+  };
+  return newQuestion;
 }
 
 // User prompts.
@@ -73,12 +84,14 @@ function getSizeDescriptions(provider) {
   */
 function infraNamePrompt() {
   const questions = [
-    {
+    questionWithHelp({
       type: 'input',
       name: consts.name,
       message: 'Pick a name for your infrastructure:',
       default: 'default',
-    },
+    }, 'The infrastructure name is used in blueprints to retrieve the ' +
+      'infrastructure. E.g. if you choose the name \'aws-small\', then ' +
+      '`baseInfrastructure(\'aws-small\')` will return this infrastructure.'),
     {
       type: 'confirm',
       name: consts.infraOverwrite,
@@ -213,9 +226,13 @@ function credentialsPrompts(provider) {
   const keys = provider.getCredsKeys();
   const keyNames = Object.keys(keys);
 
+  const credsHelp = `Quilt needs access to your ${provider.getName()} ` +
+  'credientials in order to launch VMs in your account. See details at ' +
+  'http://docs.quilt.io/#cloud-provider-configuration';
+
   keyNames.forEach((keyName) => {
     questions.push(
-      {
+      questionWithHelp({
         type: 'input',
         name: keyName,
         message: `${keys[keyName]}:`,
@@ -223,13 +240,13 @@ function credentialsPrompts(provider) {
         // I.e. keys given exactly as they should appear in the credential file.
         when(answers) {
           return (keyName !== consts.inputCredsPath &&
-          (!keyExists || answers[consts.credsConfirmOverwrite]));
+            (!keyExists || answers[consts.credsConfirmOverwrite]));
         },
         filter(input) {
           return input.trim();
         },
-      },
-      {
+      }, credsHelp),
+      questionWithHelp({
         type: 'input',
         name: keyName,
         message: `${keys[keyName]}:`,
@@ -249,7 +266,7 @@ function credentialsPrompts(provider) {
         filter(input) {
           return path.resolve(input);
         },
-      });
+      }, credsHelp));
   });
   return inquirer.prompt(questions);
 }
@@ -261,8 +278,10 @@ function credentialsPrompts(provider) {
   * @return {Promise} A promise that contains the user's answers.
   */
 function machineConfigPrompts(provider) {
-  const sizeChoices = getSizeDescriptions(provider);
-  sizeChoices[consts.other] = consts.other;
+  const regionChoices = getInquirerDescriptions(provider.getRegions());
+  const sizeChoices = getInquirerDescriptions(provider.getSizes());
+  sizeChoices.push({ name: consts.other, value: consts.other });
+
   const questions = [
     {
       type: 'confirm',
@@ -277,7 +296,7 @@ function machineConfigPrompts(provider) {
       type: 'list',
       name: consts.region,
       message: 'Which region do you want to deploy in?',
-      choices: provider.getRegions(),
+      choices: regionChoices,
       when() {
         return provider.regions !== undefined;
       },
@@ -296,12 +315,7 @@ function machineConfigPrompts(provider) {
       type: 'list',
       name: consts.size,
       message: 'Choose an instance:',
-      choices: Object.keys(sizeChoices),
-      filter(input) {
-        // The user's input will be something like 'small (m3.medium)', so we
-        // translate that into m3.medium, which we can put in the blueprint.
-        return sizeChoices[input];
-      },
+      choices: sizeChoices,
       when(answers) {
         return answers[consts.sizeType] === consts.instanceTypeSize;
       },
@@ -354,7 +368,7 @@ function machineConfigPrompts(provider) {
   */
 function machineCountPrompts() {
   const questions = [
-    {
+    questionWithHelp({
       type: 'input',
       name: consts.masterCount,
       message: 'How many master VMs?',
@@ -362,8 +376,9 @@ function machineCountPrompts() {
       validate(input) {
         return isNumber(input);
       },
-    },
-    {
+    }, 'Master VMs are in charge of keeping your application running. Most ' +
+    'users just need 1, but more can be added for fault tolerance.'),
+    questionWithHelp({
       type: 'input',
       name: consts.workerCount,
       message: 'How many worker VMs?',
@@ -371,7 +386,8 @@ function machineCountPrompts() {
       validate(input) {
         return isNumber(input);
       },
-    },
+    }, 'Worker VMs run your application code. For small applications, 1 ' +
+    'worker is typically enough.'),
   ];
 
   return inquirer.prompt(questions);

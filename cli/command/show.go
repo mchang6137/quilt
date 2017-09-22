@@ -11,8 +11,8 @@ import (
 	"time"
 
 	units "github.com/docker/go-units"
+	"github.com/quilt/quilt/blueprint"
 	"github.com/quilt/quilt/db"
-	"github.com/quilt/quilt/stitch"
 	"github.com/quilt/quilt/util"
 )
 
@@ -133,8 +133,8 @@ func writeMachines(fd io.Writer, machines []db.Machine) {
 		}
 
 		fmt.Fprintf(w, "%v\t%v\t%v\t%v\t%v\t%v\t%v\n",
-			util.ShortUUID(m.StitchID), m.Role, m.Provider, m.Region, m.Size,
-			pubIP, m.Status)
+			util.ShortUUID(m.BlueprintID), m.Role, m.Provider, m.Region,
+			m.Size, pubIP, m.Status)
 	}
 }
 
@@ -147,7 +147,7 @@ func writeContainers(fd io.Writer, containers []db.Container, machines []db.Mach
 
 	hostnamePublicPorts := map[string][]string{}
 	for _, c := range connections {
-		if c.From != stitch.PublicInternetLabel {
+		if c.From != blueprint.PublicInternetLabel {
 			continue
 		}
 
@@ -161,8 +161,8 @@ func writeContainers(fd io.Writer, containers []db.Container, machines []db.Mach
 	ipIDMap := map[string]string{}
 	idMachineMap := map[string]db.Machine{}
 	for _, m := range machines {
-		ipIDMap[m.PrivateIP] = m.StitchID
-		idMachineMap[m.StitchID] = m
+		ipIDMap[m.PrivateIP] = m.BlueprintID
+		idMachineMap[m.BlueprintID] = m
 	}
 
 	machineDBC := map[string][]db.Container{}
@@ -218,7 +218,8 @@ func writeContainers(fd io.Writer, containers []db.Container, machines []db.Mach
 			publicIP := publicIPStr(idMachineMap[machineID], publicPorts)
 
 			fmt.Fprintf(w, "%v\t%v\t%v\t%v\t%v\t%v\t%v\n",
-				util.ShortUUID(dbc.StitchID), util.ShortUUID(machineID),
+				util.ShortUUID(dbc.BlueprintID),
+				util.ShortUUID(machineID),
 				container, dbc.Hostname, status, created, publicIP)
 		}
 	}

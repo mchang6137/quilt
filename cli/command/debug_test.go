@@ -142,21 +142,21 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "1",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "1",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 				{
-					StitchID:  "4",
-					PublicIP:  "8.8.8.8",
-					PrivateIP: "9.9.9.9",
-					Role:      db.Master,
+					BlueprintID: "4",
+					PublicIP:    "8.8.8.8",
+					PrivateIP:   "9.9.9.9",
+					Role:        db.Master,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "4.3.2.1"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "4.3.2.1"},
 			},
 			expSSH:    true,
 			expReturn: 0,
@@ -175,15 +175,15 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "1",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "1",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "4.3.2.1"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "4.3.2.1"},
 			},
 			expSSH:    true,
 			expReturn: 0,
@@ -200,15 +200,15 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "1",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "1",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "4.3.2.1"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "4.3.2.1"},
 			},
 			expSSH:    true,
 			expReturn: 0,
@@ -224,21 +224,21 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "1",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "1",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 				{
-					StitchID:  "4",
-					PublicIP:  "5.6.7.8",
-					PrivateIP: "8.7.6.5",
-					Role:      db.Worker,
+					BlueprintID: "4",
+					PublicIP:    "5.6.7.8",
+					PrivateIP:   "8.7.6.5",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "8.7.6.5"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "8.7.6.5"},
 			},
 			expSSH:    true,
 			expReturn: 0,
@@ -246,7 +246,7 @@ func TestDebug(t *testing.T) {
 				workerMachineFiles(debugFolder, "4"),
 				daemonFiles(debugFolder)),
 		},
-		// Check that we can get logs by specific stitch ids
+		// Check that we can get logs by specific blueprint ids
 		{
 			cmd: Debug{
 				tar: false,
@@ -254,17 +254,17 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "1",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "1",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "4.3.2.1"},
-				{StitchID: "4", DockerID: "c", Minion: "4.3.2.1"},
-				{StitchID: "5", DockerID: "d", Minion: "4.3.2.1"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "4.3.2.1"},
+				{BlueprintID: "4", DockerID: "c", Minion: "4.3.2.1"},
+				{BlueprintID: "5", DockerID: "d", Minion: "4.3.2.1"},
 			},
 			expSSH:    true,
 			expReturn: 0,
@@ -273,7 +273,7 @@ func TestDebug(t *testing.T) {
 				containerFiles(debugFolder, "5"),
 				daemonFiles(debugFolder)),
 		},
-		// Check that we can get logs by specific stitch ids in arbitrary order
+		// Check that we can get logs by specific blueprint ids in arbitrary order
 		{
 			cmd: Debug{
 				tar: false,
@@ -281,17 +281,17 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "1",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "1",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "4.3.2.1"},
-				{StitchID: "4", DockerID: "c", Minion: "4.3.2.1"},
-				{StitchID: "5", DockerID: "d", Minion: "4.3.2.1"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "4.3.2.1"},
+				{BlueprintID: "4", DockerID: "c", Minion: "4.3.2.1"},
+				{BlueprintID: "5", DockerID: "d", Minion: "4.3.2.1"},
 			},
 			expSSH:    true,
 			expReturn: 0,
@@ -300,7 +300,7 @@ func TestDebug(t *testing.T) {
 				containerFiles(debugFolder, "2"),
 				daemonFiles(debugFolder)),
 		},
-		// Check that we error on arbitrary stitch IDs.
+		// Check that we error on arbitrary blueprint IDs.
 		{
 			cmd: Debug{
 				tar: false,
@@ -308,22 +308,22 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "409",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "409",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "4.3.2.1"},
-				{StitchID: "41", DockerID: "c", Minion: "4.3.2.1"},
-				{StitchID: "5", DockerID: "d", Minion: "4.3.2.1"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "4.3.2.1"},
+				{BlueprintID: "41", DockerID: "c", Minion: "4.3.2.1"},
+				{BlueprintID: "5", DockerID: "d", Minion: "4.3.2.1"},
 			},
 			expSSH:    false,
 			expReturn: 1,
 		},
-		// Check that we error on non-existent stitch IDs.
+		// Check that we error on non-existent blueprint IDs.
 		{
 			cmd: Debug{
 				tar: false,
@@ -331,17 +331,17 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "409",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "409",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "4.3.2.1"},
-				{StitchID: "41", DockerID: "c", Minion: "4.3.2.1"},
-				{StitchID: "5", DockerID: "d", Minion: "4.3.2.1"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "4.3.2.1"},
+				{BlueprintID: "41", DockerID: "c", Minion: "4.3.2.1"},
+				{BlueprintID: "5", DockerID: "d", Minion: "4.3.2.1"},
 			},
 			expSSH:    false,
 			expReturn: 1,
@@ -354,17 +354,17 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "1",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "1",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "4.3.2.1"},
-				{StitchID: "4", DockerID: "c", Minion: "4.3.2.1"},
-				{StitchID: "5", DockerID: "d", Minion: ""},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "4.3.2.1"},
+				{BlueprintID: "4", DockerID: "c", Minion: "4.3.2.1"},
+				{BlueprintID: "5", DockerID: "d", Minion: ""},
 			},
 			expSSH:    true,
 			expReturn: 0,
@@ -381,20 +381,20 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "1",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "1",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 				{
-					StitchID:  "4",
-					PublicIP:  "",
-					PrivateIP: "",
-					Role:      db.Worker,
+					BlueprintID: "4",
+					PublicIP:    "",
+					PrivateIP:   "",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
 			},
 			expSSH:    true,
 			expReturn: 0,
@@ -410,15 +410,15 @@ func TestDebug(t *testing.T) {
 			},
 			machines: []db.Machine{
 				{
-					StitchID:  "1",
-					PublicIP:  "1.2.3.4",
-					PrivateIP: "4.3.2.1",
-					Role:      db.Worker,
+					BlueprintID: "1",
+					PublicIP:    "1.2.3.4",
+					PrivateIP:   "4.3.2.1",
+					Role:        db.Worker,
 				},
 			},
 			containers: []db.Container{
-				{StitchID: "2", DockerID: "a", Minion: "4.3.2.1"},
-				{StitchID: "3", DockerID: "b", Minion: "4.3.2.1"},
+				{BlueprintID: "2", DockerID: "a", Minion: "4.3.2.1"},
+				{BlueprintID: "3", DockerID: "b", Minion: "4.3.2.1"},
 			},
 			expSSH:    true,
 			expReturn: 0,

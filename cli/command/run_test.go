@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	clientMock "github.com/quilt/quilt/api/client/mocks"
+	"github.com/quilt/quilt/blueprint"
 	"github.com/quilt/quilt/db"
-	"github.com/quilt/quilt/stitch"
 	"github.com/quilt/quilt/util"
 )
 
@@ -187,8 +187,8 @@ func TestPromptsUser(t *testing.T) {
 		confirm = oldConfirm
 	}()
 
-	compile = func(path string) (stitch.Stitch, error) {
-		return stitch.Stitch{}, nil
+	compile = func(path string) (blueprint.Blueprint, error) {
+		return blueprint.Blueprint{}, nil
 	}
 
 	util.AppFs = afero.NewMemMapFs()
@@ -199,14 +199,14 @@ func TestPromptsUser(t *testing.T) {
 
 		c := new(clientMock.Client)
 		c.On("QueryBlueprints").Return([]db.Blueprint{{
-			Stitch: stitch.Stitch{Namespace: "old"},
+			Blueprint: blueprint.Blueprint{Namespace: "old"},
 		}}, nil)
 		c.On("Deploy", "{}").Return(nil)
 
 		util.WriteFile("test.js", []byte(""), 0644)
 		runCmd := &Run{
 			connectionHelper: connectionHelper{client: c},
-			stitch:           "test.js",
+			blueprint:        "test.js",
 		}
 		runCmd.Run()
 
@@ -221,11 +221,12 @@ func TestPromptsUser(t *testing.T) {
 func TestRunFlags(t *testing.T) {
 	t.Parallel()
 
-	expStitch := "blueprint"
-	checkRunParsing(t, []string{"-stitch", expStitch}, Run{stitch: expStitch}, nil)
-	checkRunParsing(t, []string{expStitch}, Run{stitch: expStitch}, nil)
-	checkRunParsing(t, []string{"-f", expStitch},
-		Run{force: true, stitch: expStitch}, nil)
+	expBlueprint := "blueprint"
+	checkRunParsing(t, []string{"-blueprint", expBlueprint},
+		Run{blueprint: expBlueprint}, nil)
+	checkRunParsing(t, []string{expBlueprint}, Run{blueprint: expBlueprint}, nil)
+	checkRunParsing(t, []string{"-f", expBlueprint},
+		Run{force: true, blueprint: expBlueprint}, nil)
 	checkRunParsing(t, []string{}, Run{}, errors.New("no blueprint specified"))
 }
 
@@ -242,6 +243,6 @@ func checkRunParsing(t *testing.T, args []string, expFlags Run, expErr error) {
 	}
 
 	assert.Nil(t, err)
-	assert.Equal(t, expFlags.stitch, runCmd.stitch)
+	assert.Equal(t, expFlags.blueprint, runCmd.blueprint)
 	assert.Equal(t, expFlags.force, runCmd.force)
 }

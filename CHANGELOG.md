@@ -3,8 +3,17 @@ Quilt Change Log
 
 Up Next
 -------------
+
+Release 0.4.0
+-------------
+
+Release 0.4.0 makes some minor UX improvements.
+
 - Check for unexpected keys in the optional argument passed to the Machine,
 Container, and Deployment constructors.
+- Rename StitchID to BlueprintID in the database. This is an internal
+API-breaking change (it changes the API between internal Quilt components).
+- Fix TLS encryption for GRPC connections to machines that use floating IPs.
 
 Release 0.3.0
 -------------

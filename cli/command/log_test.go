@@ -106,16 +106,16 @@ func TestLog(t *testing.T) {
 
 	mockLocalClient := new(mocks.Client)
 	mockLocalClient.On("QueryMachines").Return([]db.Machine{{
-		StitchID: targetMachine,
-		PublicIP: "machine",
+		BlueprintID: targetMachine,
+		PublicIP:    "machine",
 	}, {
 		PublicIP:  "container",
 		PrivateIP: "containerPriv",
 	}}, nil)
 	mockLocalClient.On("QueryContainers").Return([]db.Container{{
-		StitchID: targetContainer,
-		DockerID: "foo",
-		Minion:   "containerPriv",
+		BlueprintID: targetContainer,
+		DockerID:    "foo",
+		Minion:      "containerPriv",
 	}}, nil)
 	mockLocalClient.On("Close").Return(nil)
 
@@ -143,10 +143,10 @@ func TestLog(t *testing.T) {
 func TestLogAmbiguousID(t *testing.T) {
 	mockClient := new(mocks.Client)
 	mockClient.On("QueryMachines").Return([]db.Machine{{
-		StitchID: "foo",
+		BlueprintID: "foo",
 	}}, nil)
 	mockClient.On("QueryContainers").Return([]db.Container{{
-		StitchID: "foo",
+		BlueprintID: "foo",
 	}}, nil)
 	mockClient.On("Close").Return(nil)
 
@@ -160,10 +160,10 @@ func TestLogAmbiguousID(t *testing.T) {
 func TestLogNoMatch(t *testing.T) {
 	mockClient := new(mocks.Client)
 	mockClient.On("QueryMachines").Return([]db.Machine{{
-		StitchID: "foo",
+		BlueprintID: "foo",
 	}}, nil)
 	mockClient.On("QueryContainers").Return([]db.Container{{
-		StitchID: "foo",
+		BlueprintID: "foo",
 	}}, nil)
 	mockClient.On("Close").Return(nil)
 
@@ -177,7 +177,7 @@ func TestLogNoMatch(t *testing.T) {
 func TestLogScheduledContainer(t *testing.T) {
 	mockClient := new(mocks.Client)
 	mockClient.On("QueryContainers").Return([]db.Container{{
-		StitchID: "foo",
+		BlueprintID: "foo",
 	}}, nil)
 	mockClient.On("QueryMachines").Return(nil, nil)
 	mockClient.On("Close").Return(nil)

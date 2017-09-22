@@ -1,4 +1,4 @@
-package stitch
+package blueprint
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 	"os/exec"
 )
 
-// A Stitch is an abstract representation of the policy language.
-type Stitch struct {
+// A Blueprint is an abstract representation of the policy language.
+type Blueprint struct {
 	Containers    []Container    `json:",omitempty"`
 	LoadBalancers []LoadBalancer `json:",omitempty"`
 	Connections   []Connection   `json:",omitempty"`
@@ -43,7 +43,7 @@ type Image struct {
 	Dockerfile string `json:",omitempty"`
 }
 
-// A Container may be instantiated in the stitch and queried by users.
+// A Container may be instantiated in the blueprint and queried by users.
 type Container struct {
 	ID                string            `json:",omitempty"`
 	Image             Image             `json:",omitempty"`
@@ -96,24 +96,25 @@ type Range struct {
 // network.
 const PublicInternetLabel = "public"
 
-// Accepts returns true if `x` is within the range specified by `stitchr` (include),
-// or if no max is specified and `x` is larger than `stitchr.min`.
-func (stitchr Range) Accepts(x float64) bool {
-	return stitchr.Min <= x && (stitchr.Max == 0 || x <= stitchr.Max)
+// Accepts returns true if `x` is within the range specified by `blueprintr` (include),
+// or if no max is specified and `x` is larger than `blueprintr.min`.
+func (blueprintr Range) Accepts(x float64) bool {
+	return blueprintr.Min <= x && (blueprintr.Max == 0 || x <= blueprintr.Max)
 }
 
 var lookPath = exec.LookPath
 
-// FromFile gets a Stitch handle from a file on disk.
-func FromFile(filename string) (Stitch, error) {
+// FromFile gets a Blueprint handle from a file on disk.
+func FromFile(filename string) (Blueprint, error) {
 	if _, err := lookPath("node"); err != nil {
-		return Stitch{}, errors.New(
+		return Blueprint{}, errors.New(
 			"failed to locate Node.js. Is it installed and in your PATH?")
 	}
 
 	outFile, err := ioutil.TempFile("", "quilt-out")
 	if err != nil {
-		return Stitch{}, fmt.Errorf("failed to create deployment file: %s", err)
+		return Blueprint{}, fmt.Errorf(
+			"failed to create deployment file: %s", err)
 	}
 	defer outFile.Close()
 	defer os.Remove(outFile.Name())
@@ -130,28 +131,28 @@ func FromFile(filename string) (Stitch, error) {
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
 	if err := cmd.Run(); err != nil {
-		return Stitch{}, err
+		return Blueprint{}, err
 	}
 
 	depl, err := ioutil.ReadAll(outFile)
 	if err != nil {
-		return Stitch{}, fmt.Errorf("failed to read deployment file: %s", err)
+		return Blueprint{}, fmt.Errorf("failed to read deployment file: %s", err)
 	}
 	return FromJSON(string(depl))
 }
 
-// FromJSON gets a Stitch handle from the deployment representation.
-func FromJSON(jsonStr string) (stc Stitch, err error) {
-	err = json.Unmarshal([]byte(jsonStr), &stc)
+// FromJSON gets a Blueprint handle from the deployment representation.
+func FromJSON(jsonStr string) (bp Blueprint, err error) {
+	err = json.Unmarshal([]byte(jsonStr), &bp)
 	if err != nil {
 		err = fmt.Errorf("unable to parse blueprint: %s", err)
 	}
-	return stc, err
+	return bp, err
 }
 
-// String returns the Stitch in its deployment representation.
-func (stitch Stitch) String() string {
-	jsonBytes, err := json.Marshal(stitch)
+// String returns the Blueprint in its deployment representation.
+func (bp Blueprint) String() string {
+	jsonBytes, err := json.Marshal(bp)
 	if err != nil {
 		panic(err)
 	}

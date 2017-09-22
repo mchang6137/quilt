@@ -1,12 +1,14 @@
 /* eslint require-jsdoc: [1] valid-jsdoc: [1] */
-/* eslint-disable no-underscore-dangle */
+/* eslint no-underscore-dangle: "off" */
 const crypto = require('crypto');
 const request = require('sync-request');
 const stringify = require('json-stable-stringify');
 const _ = require('underscore');
 const path = require('path');
 const os = require('os');
-const fs = require('fs');
+
+// Use `let` to enable mocking of `fs` in tests.
+let fs = require('fs'); // eslint-disable-line prefer-const
 
 const githubCache = {};
 const objectHasKey = Object.prototype.hasOwnProperty;
@@ -52,9 +54,33 @@ function getInfraPath(infraName) {
 }
 
 /**
+ * Returns the Deployment exported by the infrastructure in the given blueprint.
+ * Having this as a separate function simplifies testing baseInfrastructure().
+ * @private
+ *
+ * @param {string} infraPath - Absolute path to the infrastructure blueprint.
+ * @return {Deployment} - The Deployment exported by the infrastructure
+ *  blueprint.
+ */
+function getInfraDeployment(infraPath) {
+  const infraGetter = require(infraPath); // eslint-disable-line
+
+  // By passing this module to the infraGetter, the blueprint doesn't have to
+  // require Quilt directly and we thus don't have to `npm install` in the
+  // infrastructure directory, which would be messy.
+  return infraGetter(module.exports);
+}
+
+/**
  * Returns a base infrastructure. The infrastructure can be deployed to simply
- * by calling .deploy() on the returned object.
+ * by calling .deploy() on the returned object. The base infrastructure itself
+ * is automatically deployed, so there is no need to .deploy() it.
  * The base infrastructure could be created with `quilt init`.
+ *
+ * @example <caption>Retrieve the base infrastructure called NAME, and deploy
+ * an nginx container on it.</caption>
+ * const inf = baseInfrastructure('NAME');
+ * inf.deploy(new Container('web', 'nginx'));
  *
  * @param {string} name - The name of the infrastructure, as passed to
  *   `quilt init`.
@@ -70,12 +96,7 @@ function baseInfrastructure(name = 'default') {
     throw new Error(`no infrastructure called ${name}. Use 'quilt init' ` +
       'to create a new infrastructure.');
   }
-  const infraGetter = require(infraPath); // eslint-disable-line
-
-  // By passing this module to the infraGetter, the blueprint doesn't have to
-  // require Quilt directly and we thus don't have to `npm install` in the
-  // infrastructure directory, which would be messy.
-  return infraGetter(module.exports);
+  return getInfraDeployment(infraPath);
 }
 
 // The default deployment object. createDeployment overwrites this.
@@ -220,14 +241,18 @@ Deployment.prototype.toQuiltRepresentation = function toQuiltRepresentation() {
 };
 
 /**
- * Checks if all referenced containers in connections and load balancers are
- * really deployed.
+ * Checks if the namespace is lower case, and if all referenced 
+ * containers in connections and load balancers are really deployed.
  * @private
  *
  * @param {Deployment} deployment - A deployment object.
  * @returns {void}
  */
 function vet(deployment) {
+  if (deployment.namespace !== deployment.namespace.toLowerCase()) {
+    throw new Error(`namespace "${deployment.namespace}" contains ` +
+                  'uppercase letters. Namespaces must be lowercase.');
+  }
   const lbHostnames = deployment.loadBalancers.map(l => l.name);
   const containerHostnames = deployment.containers.map(c => c.hostname);
   const hostnames = lbHostnames.concat(containerHostnames);
@@ -257,6 +282,18 @@ function vet(deployment) {
       throw new Error(`${name} has differing Dockerfiles`);
     }
     dockerfiles[name] = c.image.dockerfile;
+  });
+
+  // Check to make sure all machines have the same region and provider.
+  let lastMachine;
+  deployment.machines.forEach((m) => {
+    if (lastMachine !== undefined &&
+      (lastMachine.region !== m.region || lastMachine.provider !== m.provider)) {
+      throw new Error('All machines must have the same provider and region. '
+        + `Found providers '${lastMachine.provider}' in region '${lastMachine.region}' `
+        + `and '${m.provider}' in region '${m.region}'.`);
+    }
+    lastMachine = m;
   });
 }
 
@@ -591,10 +628,29 @@ function getBoolean(argName, arg) {
  * @constructor
  *
  * @example <caption>Create a template Machine on Amazon, and then use the
- * template to create a master and 2 workers.</caption>
+ * template to create a master and 2 workers. This will use the default size
+ * and region for Amazon.</caption>
  * const baseMachine = new Machine({provider: 'Amazon'});
  * const master = baseMachine.asMaster();
  * const workers = baseMachine.asWorker().replicate(2);
+ *
+ * @example <caption>Create a worker machine with the 'n1-standard-1' size in
+ * GCE's 'us-east1-b' region.</caption>
+ * const googleWorker = new Machine({
+ *   provider: 'Google',
+ *   region: 'us-east1-b',
+ *   size: 'n1-standard-1',
+ *   role: 'Worker',
+ * });
+ *
+ * @example <caption>Create a DigitalOcean master droplet with the '512mb' size
+ * in the 'sfo1' zone.</caption>
+ * const googleWorker = new Machine({
+ *   provider: 'DigitalOcean',
+ *   region: 'sfo1',
+ *   size: '512mb',
+ *   role: 'Master',
+ * });
  *
  * @param {Object.<string, string>} [optionalArgs] - Optional arguments that
  *   modify the machine.
@@ -1164,5 +1220,6 @@ module.exports = {
   githubKeys,
   publicInternet,
   resetGlobals,
+  getInfraPath,
   baseInfrastructure,
 };

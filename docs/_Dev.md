@@ -1,6 +1,6 @@
 # Developing Quilt
 
-## Developer Setup
+## Setup
 
 ### Install Go
 
@@ -42,46 +42,17 @@ The Go language is opinionated about the directory structure of code, and if
 you don't put Quilt in the expected location, you'll run into errors when you
 use Go to compile Quilt.</aside>
 
-Note that if you've previously installed Quilt with npm, there will be
-another Quilt binary installed on your machine (that was downloaded during the
-npm installation).  If you want to develop Quilt,
-you probably want to make sure that when you run `quilt`, the version you're
-developing (that was compiled from the Go code) gets run, and not the Quilt
-release that was downloaded from npm. Check that this is the case:
-
-```console
-$ which quilt
-/Users/kay/gowork/bin/quilt
-```
-
-If running `which quilt` results in a path that includes your `$GOPATH$`, like
-the one above, you're all set.  If it instead returns someplace else, e.g.,
-`/usr/local/bin/quilt`, you'll need to fix your `$PATH` variable so that
-`$GOPATH/bin` comes first.
-
-### Building Quilt
-
-To build quilt, run `go install` in the Quilt directory. To do things beyond
-basic build and install, several additional build tools are required.  These
-can be installed with the `make go-get` target.
-
 ### Protobufs
 If you change any of the proto files, you'll need to regenerate the protobuf
 code. We currently use protoc v3. On a Mac with homebrew, you can install protoc v3
 using:
 
 ```console
-$ brew install --devel protobuf
+$ brew install protobuf
 ```
 
 On other operating systems you can directly download the protoc binary
 [here](https://github.com/google/protobuf/releases), and then add it to your `$PATH`.
-
-You'll also need to install protobuf go bindings:
-
-```console
-$ go get -u github.com/golang/protobuf/{proto,protoc-gen-go}
-```
 
 To generate the protobufs simply call:
 
@@ -105,28 +76,75 @@ To update a dependency:
 $ govendor update +vendor
 ```
 
-### Developing the Minion
-Whenever you develop code in `minion`, make sure you run your personal minion
-image, and not the default Quilt minion image.  To do that, follow these steps:
+## Building and Testing
 
-1. Create a new empty repository on your favorite registry -
-[docker hub](https://hub.docker.com/) for example.
-2. Modify `quiltImage` in [cfg.go](../cloud/cfg/cfg.go) to
-point to your repo.
-3. Modify `Version` in [version.go](../version/version.go) to be "latest".
-This ensures that you will be using the most recent version of the minion
-image that you are pushing up to your registry.
-4. Create a `.mk` file (for example: `local.mk`) to override variables
-defined in [Makefile](../Makefile). Set `REPO` to your own repository
-(for example: `REPO = sample_repo`) inside the `.mk` file you created.
-5. Create the docker image: `make docker-build-quilt`
-   * Docker for Mac and Windows is in beta. See the
-   [docs](https://docs.docker.com/) for install instructions.
-6. Sign in to your image registry using `docker login`.
-7. Push your image: `make docker-push-quilt`.
+### Building and Testing the Go Code
 
-After the above setup, you're good to go - just remember to build and push your
-image first, whenever you want to run the `minion` with your latest changes.
+To build Quilt, run `go install` in the Quilt directory.  To do things beyond
+basic build and install, several additional build tools are required.  These
+can be installed with the `make go-get` target.
+
+Note that if you've previously installed Quilt with npm, there will be
+another Quilt binary installed on your machine (that was downloaded during the
+npm installation).  If you want to develop Quilt,
+you probably want to make sure that when you run `quilt`, the version you're
+developing (that was compiled from the Go code) gets run, and not the Quilt
+release that was downloaded from npm. Check that this is the case:
+
+```console
+$ which quilt
+/Users/kay/gowork/bin/quilt
+```
+
+If running `which quilt` results in a path that includes your `$GOPATH$`, like
+the one above, you're all set.  If it instead returns someplace else, e.g.,
+`/usr/local/bin/quilt`, you'll need to fix your `$PATH` variable so that
+`$GOPATH/bin` comes first.
+
+To run the `go` tests, use the `gocheck` Make target in the root directory:
+
+```console
+$ make gocheck
+```
+
+If you'd like to run the tests in just one package, e.g., the tests in the
+`engine` package, use `go test` with the package name:
+
+```console
+$ go test github.com/quilt/quilt/engine
+```
+
+### Building and Testing the JavaScript Code
+
+To run the JavaScript code, you'll need to use `npm` to install Quilt's
+dependencies:
+
+```console
+$ npm install .
+```
+
+If you're developing the @quilt/quilt package, you must also tell Node.js
+to use your local development copy of the Quilt JavaScript bindings (when you
+use Quilt to run blueprints) by running:
+
+```console
+$ npm link .
+```
+
+in the directory that contains your local Quilt source files. For each blueprint
+that uses the Quilt JavaScript bindings, you must also run:
+
+```console
+$ npm link @quilt/quilt
+```
+
+in the directory that contains the blueprint JavaScript files.
+
+To run the JavaScript tests for `bindings.js`, use the `jscheck` build target:
+
+```console
+$ make jscheck
+```
 
 ## Contributing Code
 
@@ -141,16 +159,28 @@ development workflows.   Changes are submitted using the Github Pull Request
 System and, after appropriate review, fast-forwarded into master.
 See [Submitting Patches](#submitting-patches) for details.
 
-### Coding Style
+### Go Coding Style
 The coding style is as defined by the `gofmt` tool: whatever transformations it
-makes on a piece of code are considered, by definition, the correct style.  In
-addition, `golint`, `go vet`, and `go test` should pass without warning on all
-changes.  An easy way to check these requirements is to run `make lint check`
-on each patch before submitting a pull request. Running `make format` will fix
-many (but not all) formatting errors.
+makes on a piece of code are considered, by definition, the correct style.
+Unlike official go style, in Quilt lines should be wrapped to 89 characters. To
+make sure that your code is properly formatted, run:
 
-Unlike official go style, in Quilt lines should be wrapped to 89 characters.
-This requirement is checked by `make lint`.
+```console
+$ make golint
+```
+
+Running `make format` will fix many (but not all) formatting errors.
+
+### JavaScript Coding Style
+
+Quilt uses the AirBnb JavaScript style guide. To make sure that your JavaScript
+code is properly formatted, run:
+
+```console
+$ make jslint
+```
+
+### Git Commits
 
 The fundamental unit of work in the Quilt project is the git commit.  Each
 commit should be a coherent whole that implements one idea completely and
@@ -182,20 +212,17 @@ Pull requests are reviewed by one person: either by a committer, if the code was
 submitted by a non-committer, or by a non-committer otherwise. You do not
 need to choose a reviewer yourself; [quilt-bot](https://github.com/quilt-bot)
 will randomly select a reviewer from the appropriate group. Once the reviewer
-has approved the pull request, a committer will merge it.
-
-Once the patch has been approved by the first reviewer, quilt-bot will assign a
-committer to do a second (sometimes cursory) review. The committer will
-either merge the patch, provide feedback, or if a great deal of work is
-still needed, punt the patch back to the original reviewer.
+has approved the pull request, a committer will merge it. If the reviewer
+requests changes, leave a comment in the PR once you've implemented the changes,
+so that the reviewer knows that the PR is ready for another look.
 
 It should be noted that the code
 review assignment is just a suggestion. If a another contributor, or member of
 the public for that matter, happens to do a detailed review and provide a `+1`
 then the assigned reviewer is relieved of their responsibility.  If you're not
-the assigned reviewer, but would like to do the code review, it may be polite
-to comment in the PR to that effect so the assigned reviewer knows they need
-not review the patch.
+the assigned reviewer, but would like to do the code review, please comment in
+the PR to that effect so the assigned reviewer knows they need not review the
+patch.
 
 We expect patches to go through multiple rounds of code review, each involving
 multiple changes to the code.  After each round of review, the original author
@@ -205,12 +232,6 @@ they should be folded into the original patches or, if appropriate inserted as
 a new patch in the series.  Changes _should not_ be simply tacked on to the end
 of the series as tweaks to be squashed in later -- at all stages the PRs should
 be ready to merge without reorganizing commits.
-
-## The Quilt Daemon
-Two processes need to be running for blueprints to be enforced:  `quilt daemon` and
-`quilt run`. `quilt daemon` does the heavy lifting -- it's responsible for enforcing
-blueprints.  `quilt run` is responsible for compiling blueprints and sending them to
-the daemon to be enforced.
 
 ## Code Structure
 Quilt is structured around a central database (`db`) that stores information about
@@ -283,3 +304,27 @@ While it is possible to boot multiple `master` VMs, there is only one effective
 `master` at any given time. The remaining `master` VMs simply perform as
 backups in case the leading `master` fails.
 
+## Developing the Minion
+
+If you're developing code in `minion`, you'll need to do some extra setup to
+test your new code.  To make Quilt run your local version of the minion image,
+and not the default Quilt minion image, follow these steps:
+
+1. Create a new empty repository on your favorite registry -
+[docker hub](https://hub.docker.com/) for example.
+2. Modify `quiltImage` in [cfg.go](../cloud/cfg/cfg.go) to
+point to your repo.
+3. Modify `Version` in [version.go](../version/version.go) to be "latest".
+This ensures that you will be using the most recent version of the minion
+image that you are pushing up to your registry.
+4. Create a `.mk` file (for example: `local.mk`) to override variables
+defined in [Makefile](../Makefile). Set `REPO` to your own repository
+(for example: `REPO = sample_repo`) inside the `.mk` file you created.
+5. Create the docker image: `make docker-build-quilt`
+   * Docker for Mac and Windows is in beta. See the
+   [docs](https://docs.docker.com/) for install instructions.
+6. Sign in to your image registry using `docker login`.
+7. Push your image: `make docker-push-quilt`.
+
+After the above setup, you're good to go - just remember to build and push your
+image first, whenever you want to run the `minion` with your latest changes.
