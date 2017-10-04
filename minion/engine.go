@@ -90,6 +90,7 @@ func updatePlacements(view db.Database, blueprint stitch.Stitch) {
 			Size:            sp.Size,
 			Region:          sp.Region,
 			FloatingIP:      sp.FloatingIP,
+			DiskSize:        sp.DiskSize,
 		})
 	}
 
