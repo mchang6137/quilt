@@ -154,6 +154,14 @@ func validPlacement(constraints []db.Placement, m minion, peers []*db.Container,
 				return false
 			}
 		}
+
+		if constraint.DiskSize != 0 {
+		       on := constraint.DiskSize == m.DiskSize
+		       if constraint.Exclusive == on {
+		       	        return false
+		       }
+		}
+
 	}
 
 	return true

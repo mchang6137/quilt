@@ -38,6 +38,7 @@ func (s server) GetMinionConfig(cts context.Context,
 	cfg.Provider = m.Provider
 	cfg.Size = m.Size
 	cfg.Region = m.Region
+	cfg.DiskSize = int32(m.DiskSize)
 	cfg.AuthorizedKeys = strings.Split(m.AuthorizedKeys, "\n")
 
 	s.Txn(db.EtcdTable).Run(func(view db.Database) error {
@@ -62,6 +63,7 @@ func (s server) SetMinionConfig(ctx context.Context,
 		minion.Size = msg.Size
 		minion.Region = msg.Region
 		minion.FloatingIP = msg.FloatingIP
+		minion.DiskSize = int(msg.DiskSize)
 		minion.AuthorizedKeys = strings.Join(msg.AuthorizedKeys, "\n")
 		minion.Self = true
 		view.Commit(minion)
