@@ -84,7 +84,7 @@ Outer:
 				continue Outer
 			}
 		}
-
+		
 		log.WithField("container", dbc).Warning("Failed to place container.")
 	}
 }
@@ -156,7 +156,15 @@ func validPlacement(constraints []db.Placement, m minion, peers []*db.Container,
 		}
 
 		if constraint.DiskSize != 0 {
-		       on := constraint.DiskSize < m.DiskSize
+		       on := constraint.DiskSize == m.DiskSize
+		       if constraint.Exclusive == on {
+		       	  log.WithField("constraint size", constraint.DiskSize).Info("MICHAEL: Failed to place.")
+			  log.WithField("machine size", m.DiskSize).Info("MICHAEL: Failed to place.")
+		       }
+		       if constraint.Exclusive != on {
+		       	  log.WithField("constraint size", constraint.DiskSize).Info("MICHAEL: Succeeded to place.")
+		       	  log.WithField("machine size", m.DiskSize).Info("MICHAEL: Succeeded to place.")
+  		       }			  
 		       if constraint.Exclusive == on {
 		       	        return false
 		       }
