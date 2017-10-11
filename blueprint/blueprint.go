@@ -34,6 +34,7 @@ type Placement struct {
 	Size       string `json:",omitempty"`
 	Region     string `json:",omitempty"`
 	FloatingIP string `json:",omitempty"`
+	DiskSize   int    `json:",omitempty"`
 }
 
 // An Image represents a Docker image that can be run. If the Dockerfile is non-empty,

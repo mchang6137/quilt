@@ -91,9 +91,10 @@ func diffMinion(dbMinions, storeMinions []db.Minion) (del, add []db.Minion) {
 		return struct {
 			Role, PrivateIP, HostSubnets       string
 			Provider, Size, Region, FloatingIP string
+			DiskSize			   int
 		}{
 			string(m.Role), m.PrivateIP, strings.Join(m.HostSubnets, " "),
-			m.Provider, m.Size, m.Region, m.FloatingIP,
+			m.Provider, m.Size, m.Region, m.FloatingIP, m.DiskSize,
 		}
 	}
 

@@ -20,6 +20,7 @@ type Placement struct {
 	Size       string
 	Region     string
 	FloatingIP string
+	DiskSize   int
 }
 
 // PlacementSlice is an alias for []Placement to allow for joins

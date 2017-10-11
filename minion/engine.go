@@ -90,6 +90,7 @@ func updatePlacements(view db.Database, bp blueprint.Blueprint) {
 			Size:            sp.Size,
 			Region:          sp.Region,
 			FloatingIP:      sp.FloatingIP,
+			DiskSize:        sp.DiskSize,
 		})
 	}
 

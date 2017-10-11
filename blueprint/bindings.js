@@ -936,11 +936,12 @@ Container.prototype.hash = function containerHash() {
 
 Container.prototype.placeOn = function containerPlaceOn(machineAttrs) {
   this.placements.push({
-    exclusive: false,
-    provider: getString('provider', machineAttrs.provider),
-    size: getString('size', machineAttrs.size),
-    region: getString('region', machineAttrs.region),
-    floatingIp: getString('floatingIp', machineAttrs.floatingIp),
+      exclusive: false,
+      provider: getString('provider', machineAttrs.provider),
+      size: getString('size', machineAttrs.size),
+      region: getString('region', machineAttrs.region),
+      floatingIp: getString('floatingIp', machineAttrs.floatingIp),
+      diskSize: getNumber('diskSize', machineAttrs.diskSize),
   });
 };
 
@@ -1149,6 +1150,7 @@ function allow(src, dst, port) {
   boxConnectable(dst).forEach((c) => {
     c.allowFrom(src, port);
   });
+}
 
 /**
  * Creates a Connection.

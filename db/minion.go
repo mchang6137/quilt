@@ -17,6 +17,7 @@ type Minion struct {
 	Region      string
 	FloatingIP  string
 	HostSubnets []string
+	DiskSize    int
 }
 
 // InsertMinion creates a new Minion and inserts it into 'db'.

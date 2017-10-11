@@ -84,7 +84,7 @@ Outer:
 				continue Outer
 			}
 		}
-		
+
 		log.WithField("container", dbc).Warning("Failed to place container.")
 	}
 }
@@ -102,10 +102,10 @@ func canBeColocated(constraint db.Placement, toPlace db.Container,
 	}
 
 	for _, p := range peers {
-		toPlaceIsTarget := toPlace.BlueprintID == constraint.TargetContainer
-		peerIsTarget := p.BlueprintID == constraint.TargetContainer
-		toPlaceIsOther := toPlace.BlueprintID == constraint.OtherContainer
-		peerIsOther := p.BlueprintID == constraint.OtherContainer
+		toPlaceIsTarget := toPlace.StitchID == constraint.TargetContainer
+		peerIsTarget := p.StitchID == constraint.TargetContainer
+		toPlaceIsOther := toPlace.StitchID == constraint.OtherContainer
+		peerIsOther := p.StitchID == constraint.OtherContainer
 		if (toPlaceIsTarget && peerIsOther) || (peerIsTarget && toPlaceIsOther) {
 			return false
 		}
@@ -123,7 +123,7 @@ func validPlacement(constraints []db.Placement, m minion, peers []*db.Container,
 			}
 		}
 
-		if dbc.BlueprintID != constraint.TargetContainer {
+		if dbc.StitchID != constraint.TargetContainer {
 			continue
 		}
 
@@ -156,15 +156,7 @@ func validPlacement(constraints []db.Placement, m minion, peers []*db.Container,
 		}
 
 		if constraint.DiskSize != 0 {
-		       on := constraint.DiskSize == m.DiskSize
-		       if constraint.Exclusive == on {
-		       	  log.WithField("constraint size", constraint.DiskSize).Info("MICHAEL: Failed to place.")
-			  log.WithField("machine size", m.DiskSize).Info("MICHAEL: Failed to place.")
-		       }
-		       if constraint.Exclusive != on {
-		       	  log.WithField("constraint size", constraint.DiskSize).Info("MICHAEL: Succeeded to place.")
-		       	  log.WithField("machine size", m.DiskSize).Info("MICHAEL: Succeeded to place.")
-  		       }			  
+		       on := constraint.DiskSize < m.DiskSize
 		       if constraint.Exclusive == on {
 		       	        return false
 		       }
@@ -266,7 +258,7 @@ func (s dbcSlice) Less(i, j int) bool {
 	case !util.StrSliceEqual(s[i].Command, s[j].Command):
 		return fmt.Sprintf("%s", s[i].Command) < fmt.Sprintf("%s", s[j].Command)
 	default:
-		return s[i].BlueprintID < s[j].BlueprintID
+		return s[i].StitchID < s[j].StitchID
 	}
 }
 
