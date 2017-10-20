@@ -119,7 +119,7 @@ ssh_keys="{{.SSHKeys}}"
 setup_user quilt "$ssh_keys"
 
 sudo mkdir -p /run/docker/plugins
-sudo chmod -R /run/docker/plugins 0755
+sudo chmod -R 0755 /run/docker/plugins
 
 install_docker
 initialize_ovs
