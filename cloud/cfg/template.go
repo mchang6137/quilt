@@ -122,7 +122,7 @@ setup_user quilt "$ssh_keys"
 sudo mkdir -p /run/docker/plugins
 sudo chmod -R 0755 /run/docker/plugins
 
-install_docker
+# install_docker
 initialize_ovs
 initialize_docker
 initialize_minion
