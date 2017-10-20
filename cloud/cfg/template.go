@@ -87,9 +87,9 @@ install_docker() {
 	    exit 1
 	fi
 
-	add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-	apt-get update
-	apt-get install docker-ce=17.06.0~ce-0~ubuntu -y
+	sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+	sudo apt-get update
+	sudo apt-get install docker-ce=17.06.0~ce-0~ubuntu -y
 	systemctl stop docker.service
 }
 
