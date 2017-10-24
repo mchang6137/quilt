@@ -51,7 +51,7 @@ var Regions = []string{"ap-southeast-2", "us-west-1", "us-west-2"}
 var amis = map[string]string{
 	"ap-southeast-2": "ami-943d3bf7",
 	"us-west-1":      "ami-0c19246c",
-	"us-west-2":      "ami-d206bdb2",
+	"us-west-2":      "ami-afed21d7",
 }
 
 var sleep = time.Sleep
