@@ -119,6 +119,7 @@ func RunOnce(conn db.Conn) {
 			Region:         m.machine.Region,
 			EtcdMembers:    etcdIPs,
 			AuthorizedKeys: m.machine.SSHKeys,
+			DiskSize:		int32(m.machine.DiskSize),
 		}
 
 		if reflect.DeepEqual(newConfig, m.config) {
